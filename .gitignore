@@ -16,3 +16,9 @@ frontend/.vite/
 # Logs
 *.log
 npm-debug.log*
+
+# Local-only docs (not for the repo)
+codebase-overview.md
+habit-tracker-improvements.md
+free-hosting-guide.md
+tracker.html

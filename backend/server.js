@@ -5,7 +5,7 @@ const cors = require('cors');
 const Habit = require('./models/Habit');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 const allowedOrigins = process.env.FRONTEND_URL
