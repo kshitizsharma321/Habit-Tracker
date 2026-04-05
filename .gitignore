@@ -22,3 +22,6 @@ codebase-overview.md
 habit-tracker-improvements.md
 free-hosting-guide.md
 tracker.html
+
+# Local-only VS Code / Copilot workspace config
+.github/
