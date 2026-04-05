@@ -14,6 +14,7 @@ import LogEntry from './components/LogEntry/LogEntry';
 import History from './components/History/History';
 import AdvancedStatsModal from './components/AdvancedStatsModal';
 import WelcomeBanner from './components/WelcomeBanner';
+import NotificationSettings from './components/NotificationSettings/NotificationSettings';
 import { downloadCSV } from './utils/stats';
 
 const queryClient = new QueryClient({
@@ -128,6 +129,9 @@ function HabitApp() {
             📈 Advanced Stats
           </button>
         </div>
+
+        {/* ── Notification settings ────────────────────────────────────── */}
+        <NotificationSettings />
 
         {/* ── History ──────────────────────────────────────────────────── */}
         <History habitData={habitData} rawData={rawData} />

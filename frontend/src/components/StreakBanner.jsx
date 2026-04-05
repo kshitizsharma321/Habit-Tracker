@@ -45,11 +45,11 @@ export default function StreakBanner({ habitData, habitName }) {
 
   return (
     <div className="text-center mb-6">
-      {habitName && (
+      {/* {habitName && (
         <p className="text-sm font-medium text-text-secondary mb-1 uppercase tracking-widest">
           {habitName}
         </p>
-      )}
+      )} */}
       <h1 className="text-3xl font-bold text-text-primary">
         Current Streak:{' '}
         <span

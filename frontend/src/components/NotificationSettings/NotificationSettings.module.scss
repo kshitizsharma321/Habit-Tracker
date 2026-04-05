@@ -1,0 +1,112 @@
+.card {
+  animation: fadeIn 0.3s ease;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+// ── Toggle switch ──────────────────────────────────────────────────────────────
+
+.toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: 48px;
+  height: 26px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.25s ease;
+  padding: 0;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.toggleOn  { background: var(--success-color); }
+.toggleOff { background: var(--border-color); }
+
+.thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.25s ease;
+  pointer-events: none;
+  display: block;
+
+  .toggleOn & {
+    transform: translateX(22px);
+  }
+}
+
+.spinner {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #ffffff;
+  animation: spin 0.6s linear infinite;
+  display: block;
+
+  .toggleOn & { left: 27px; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+// ── Time picker ────────────────────────────────────────────────────────────────
+
+.timePicker {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.timeInput {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 5px 10px;
+  font-size: 14px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+}
+
+// ── Status messages ────────────────────────────────────────────────────────────
+
+.deniedMsg {
+  font-size: 0.82rem;
+  color: var(--danger-color);
+  margin-top: 0.75rem;
+  padding: 7px 12px;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.errorMsg {
+  font-size: 0.82rem;
+  color: var(--danger-color);
+  margin-top: 0.5rem;
+}
