@@ -93,6 +93,30 @@
   }
 }
 
+.testBtn {
+  margin-left: auto;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1.5px solid var(--accent-color);
+  color: var(--accent-color);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    background: var(--accent-color);
+    color: #ffffff;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
 // ── Status messages ────────────────────────────────────────────────────────────
 
 .deniedMsg {

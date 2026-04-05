@@ -164,6 +164,43 @@ app.delete('/api/subscriptions', async (req, res) => {
 // the current IST time (HH:MM). Render free tier must be kept awake (e.g. UptimeRobot)
 // for this to fire reliably — ping /api/health every 5 minutes.
 
+async function sendPush(sub, payload) {
+  // Convert Mongoose subdocument to plain object so web-push receives a clean { p256dh, auth }
+  return webpush.sendNotification(
+    { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
+    payload
+  );
+}
+
+// Test endpoint — sends an immediate push to all stored subscriptions (debugging only)
+app.post('/api/test-push', async (req, res) => {
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    return res.status(503).json({ error: 'VAPID keys not configured on the backend' });
+  }
+  const subs = await Subscription.find({}).catch(() => []);
+  if (subs.length === 0) {
+    return res.json({ sent: 0, message: 'No subscriptions found — enable reminders in the app first' });
+  }
+  const payload = JSON.stringify({
+    title: '✅ Test Notification',
+    body: 'Push notifications are working! 🎉',
+  });
+  let sent = 0;
+  await Promise.allSettled(
+    subs.map(async (sub) => {
+      try {
+        await sendPush(sub, payload);
+        sent++;
+      } catch (err) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          await Subscription.deleteOne({ endpoint: sub.endpoint });
+        }
+      }
+    })
+  );
+  res.json({ sent, total: subs.length });
+});
+
 cron.schedule('* * * * *', async () => {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) return;
 
@@ -181,12 +218,8 @@ cron.schedule('* * * * *', async () => {
   await Promise.allSettled(
     subs.map(async (sub) => {
       try {
-        await webpush.sendNotification(
-          { endpoint: sub.endpoint, keys: sub.keys },
-          payload
-        );
+        await sendPush(sub, payload);
       } catch (err) {
-        // 410 Gone / 404 = subscription expired or revoked — clean it up
         if (err.statusCode === 410 || err.statusCode === 404) {
           await Subscription.deleteOne({ endpoint: sub.endpoint });
         }

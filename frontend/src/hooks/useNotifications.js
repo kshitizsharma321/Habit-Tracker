@@ -59,12 +59,14 @@ export function useNotifications() {
       setPermission(perm);
       if (perm !== 'granted') throw new Error('Notification permission was denied');
 
-      // 2. Register Service Worker
+      // 2. Register Service Worker and wait until it's fully ACTIVE
       const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-      await navigator.serviceWorker.ready;
+      // navigator.serviceWorker.ready resolves only when a SW is active —
+      // using reg directly may still be in 'installing' state and fail to subscribe
+      const readyReg = await navigator.serviceWorker.ready;
 
       // 3. Subscribe to Web Push
-      const sub = await reg.pushManager.subscribe({
+      const sub = await readyReg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
@@ -128,5 +130,21 @@ export function useNotifications() {
     } catch { /* non-critical — time saved locally already */ }
   }, [isEnabled]);
 
-  return { isSupported, permission, isEnabled, reminderTime, loading, error, enable, disable, updateTime };
+  // Trigger an immediate test push — useful to verify the full pipeline works
+  const testPush = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/test-push`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Test push failed');
+      if (data.sent === 0) throw new Error('Push sent but no subscriptions found — try re-enabling reminders');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { isSupported, permission, isEnabled, reminderTime, loading, error, enable, disable, updateTime, testPush };
 }

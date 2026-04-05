@@ -20,6 +20,7 @@ export default function NotificationSettings() {
     enable,
     disable,
     updateTime,
+    testPush,
   } = useNotifications();
 
   const [localTime, setLocalTime] = useState(reminderTime);
@@ -79,6 +80,14 @@ export default function NotificationSettings() {
             onChange={handleTimeChange}
             className={styles.timeInput}
           />
+          <button
+            onClick={testPush}
+            disabled={loading}
+            className={styles.testBtn}
+            title="Send a test notification right now"
+          >
+            Test now
+          </button>
         </div>
       )}
 
