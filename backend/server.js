@@ -172,14 +172,26 @@ async function sendPush(sub, payload) {
   );
 }
 
-// Test endpoint — sends an immediate push to all stored subscriptions (debugging only)
+// Test endpoint — sends an immediate push to the requesting browser's subscription
+// Body: { endpoint: string } — if omitted, falls back to all subscriptions
 app.post('/api/test-push', async (req, res) => {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
     return res.status(503).json({ error: 'VAPID keys not configured on the backend' });
   }
-  const subs = await Subscription.find({}).catch(() => []);
-  if (subs.length === 0) {
-    return res.json({ sent: 0, message: 'No subscriptions found — enable reminders in the app first' });
+  const { endpoint } = req.body ?? {};
+  let subs;
+  if (endpoint) {
+    // Target only the subscription for THIS browser
+    const sub = await Subscription.findOne({ endpoint }).catch(() => null);
+    if (!sub) {
+      return res.json({ sent: 0, message: 'Your browser subscription was not found on the server — disable and re-enable reminders to register it' });
+    }
+    subs = [sub];
+  } else {
+    subs = await Subscription.find({}).catch(() => []);
+    if (subs.length === 0) {
+      return res.json({ sent: 0, message: 'No subscriptions found — enable reminders in the app first' });
+    }
   }
   const payload = JSON.stringify({
     title: '✅ Test Notification',

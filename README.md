@@ -43,6 +43,14 @@ A full-stack habit tracking web app. Pick one habit, log it every day (yes or no
 - **Optimistic updates** — the UI responds instantly when you log; rolls back automatically if the server request fails
 - **Fully responsive** — works on mobile, tablet, and desktop
 
+### Daily Reminders (Push Notifications)
+- **Toggle on/off** from the 🔔 Daily Reminder card
+- Pick any reminder time (stored in IST) — backend cron fires a push at the exact minute
+- In-app test button — sends an immediate push to verify the full pipeline
+- Green banner confirms the push was received by the browser even if OS silences the notification
+- Works on **Android** (Chrome/Firefox) natively; on **iOS 16.4+** the app must be added to the Home Screen first
+- Silently disabled when VAPID keys are not configured (no errors shown to users)
+
 ---
 
 ## Tech Stack
@@ -177,18 +185,33 @@ All routes return JSON. Errors return `{ error: "message" }` with an appropriate
 | Variable | Required | Description |
 |---|---|---|
 | `MONGODB_URI` | ✅ | MongoDB connection string (local or Atlas) |
-| `PORT` | optional | Server port — defaults to `3000`. Render sets this automatically in production. |
-| `FRONTEND_URL` | production only | Your Vercel URL with no trailing slash — restricts CORS to this origin only |
+| `PORT` | optional | Server port — defaults to `3000`. Render sets this automatically. |
+| `FRONTEND_URL` | production only | Your Vercel URL (no trailing slash) — restricts CORS to this origin |
+| `VAPID_PUBLIC_KEY` | optional | Generate with `npx web-push generate-vapid-keys`. Required for push notifications. |
+| `VAPID_PRIVATE_KEY` | optional | Private key from the same command. Keep secret — never commit. |
 
 ### `frontend/.env`
 
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_API_URL` | ✅ | Backend base URL **including `/api`**, no trailing slash |
+| `VITE_VAPID_PUBLIC_KEY` | optional | Must match `VAPID_PUBLIC_KEY` on the backend. Required for push notifications. |
 
-> **Important:** Vite bakes env vars into the build at compile time. After changing `VITE_API_URL` on Vercel you must trigger a manual redeploy for the new value to take effect.
+> **Important:** Vite bakes env vars into the build at compile time. After changing any `VITE_*` var on Vercel you must trigger a manual redeploy for the new value to take effect.
 
 > **Local vs production:** In local dev the Vite proxy handles `/api` routing, but in the production Vercel build there is no proxy — the frontend must call the Render URL directly via `VITE_API_URL`.
+
+### Generating VAPID keys (one-time setup for push notifications)
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Copy the output into both `.env` files:
+- `backend/.env` → `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`
+- `frontend/.env` → `VITE_VAPID_PUBLIC_KEY` (public key only)
+
+The same pair must be used across both files — mismatched keys will cause subscription failures.
 
 ---
 
@@ -235,7 +258,18 @@ The app can be hosted completely free using MongoDB Atlas + Render + Vercel.
 2. Set `FRONTEND_URL` = `https://your-app.vercel.app` (no trailing slash)
 3. Render redeploys automatically
 
-### Step 5 — Verify
+### Step 5 — Push Notifications (optional)
+
+1. Generate VAPID keys locally: `npx web-push generate-vapid-keys`
+2. Add to **Render** environment variables:
+   - `VAPID_PUBLIC_KEY` → the public key
+   - `VAPID_PRIVATE_KEY` → the private key
+3. Add to **Vercel** environment variables:
+   - `VITE_VAPID_PUBLIC_KEY` → the same public key
+4. Trigger a **manual redeploy on Vercel** (Vercel → Deployments → Redeploy) so Vite bakes the new env var into the build
+5. To keep cron reliable on Render free tier: set up [UptimeRobot](https://uptimerobot.com) to ping `https://your-app.onrender.com/api/health` every 5 minutes
+
+### Step 6 — Verify
 
 Open your Vercel URL on your phone and log a habit. Check MongoDB Atlas → **Collections** to confirm the entry was saved.
 
@@ -263,6 +297,10 @@ Open your Vercel URL on your phone and log a habit. Check MongoDB Atlas → **Co
 | Data not saving | Atlas IP allowlist too restrictive | Set `0.0.0.0/0` in Atlas Network Access |
 | First load takes 40+ seconds | Render cold start | Normal on free tier — wake the server first (see tip above) |
 | Env var change not reflected | Vite bakes vars at build time | Trigger a manual redeploy on Vercel after any `VITE_*` change |
+| Push notifications not appearing | macOS blocking Chrome notifications | System Settings → Notifications → Google Chrome → set to Alerts or Banners |
+| "Test now" shows error | Browser subscription not registered in backend | Disable then Re-enable reminders in the app to re-register |
+| Push works locally, not on Render | VAPID keys missing in Render env vars | Add `VAPID_PUBLIC_KEY` + `VAPID_PRIVATE_KEY` to Render → Environment |
+| Push not working on iOS | iOS requires PWA installation | On iOS 16.4+: tap the Share icon in Safari → **Add to Home Screen**, then open from home screen and enable reminders |
 
 ---
 
@@ -282,21 +320,32 @@ Open your Vercel URL on your phone and log a habit. Check MongoDB Atlas → **Co
 ```
 Habit Tracker/
 ├── backend/
-│   ├── server.js          # Express API (port 5000 locally)
-│   ├── models/Habit.js    # Mongoose schema
-│   ├── migrate.js         # One-off migration script (legacy)
-│   ├── .env.example       # Required env vars for backend
+│   ├── server.js              # Express API server (port 3000 locally)
+│   ├── models/Habit.js        # Mongoose schema: date (String, unique) + response enum (yes/no)
+│   ├── models/Subscription.js # Push subscription schema (endpoint, keys, reminderTime IST)
+│   ├── migrate.js             # One-off migration script (legacy, not part of app runtime)
+│   ├── .env.example           # Required env vars for backend
 │   └── package.json
 └── frontend/
+    ├── public/
+    │   └── sw.js                  # Service Worker — push event handler + notification click
     ├── src/
     │   ├── App.jsx
     │   ├── api/habitsApi.js
-    │   ├── hooks/          # useHabitData (TanStack Query), useHabitName
-    │   ├── components/     # StreakCalendar, History, LogEntry, StatsGrid, …
-    │   ├── utils/          # stats.js, dates.js
-    │   ├── contexts/       # ThemeContext
-    │   └── styles/         # globals.scss, _animations.scss
-    ├── .env.example        # Required env vars for frontend
+    │   ├── hooks/
+    │   │   ├── useHabitData.js        # TanStack Query data hook
+    │   │   ├── useHabitName.js        # Habit name in localStorage
+    │   │   └── useNotifications.js    # SW registration, Web Push subscribe/unsubscribe
+    │   ├── components/
+    │   │   ├── NotificationSettings/  # Toggle + time picker + test button card
+    │   │   ├── StreakCalendar/
+    │   │   ├── History/
+    │   │   ├── LogEntry/
+    │   │   └── StatsGrid, ProgressBars, …
+    │   ├── utils/                 # stats.js, dates.js
+    │   ├── contexts/              # ThemeContext
+    │   └── styles/                # globals.scss, _animations.scss
+    ├── .env.example           # Required env vars for frontend
     └── package.json
 ```
 
@@ -323,10 +372,10 @@ cd backend
 npm install
 cp .env.example .env
 # Edit .env — set MONGODB_URI to your local MongoDB or Atlas string
-npm start
+node server.js
 ```
 
-Backend runs at `http://localhost:5000`.
+Backend runs at `http://localhost:3000`.
 
 ### 3. Frontend setup
 
@@ -334,7 +383,7 @@ Backend runs at `http://localhost:5000`.
 cd frontend
 npm install
 cp .env.example .env
-# .env already points to http://localhost:5000/api by default — no edit needed for local dev
+# .env already points to http://localhost:3000/api by default — no edit needed for local dev
 npm run dev
 ```
 
@@ -344,10 +393,18 @@ Frontend runs at `http://localhost:5173`.
 
 ## API Routes
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/habits` | Fetch all habit logs as `{ "YYYY-MM-DD": "yes\|no" }` |
-| POST | `/api/habits` | Upsert a single day `{ date, response }` |
+| Method | Path | Body / Params | Description |
+|---|---|---|---|
+| GET | `/api/habits` | — | Returns all logs as `{ "YYYY-MM-DD": "yes\|no" }` |
+| POST | `/api/habits` | `{ date, response }` | Upsert a single day's log |
+| POST | `/api/habits/bulk` | `{ "YYYY-MM-DD": "yes\|no", … }` | Batch upsert (migration use only) |
+| DELETE | `/api/habits/:date` | — | Delete a single day's log |
+| POST | `/api/subscriptions` | `{ subscription, reminderTime }` | Save/update a Web Push subscription |
+| DELETE | `/api/subscriptions` | `{ endpoint }` | Remove a push subscription |
+| POST | `/api/test-push` | `{ endpoint? }` | Send immediate push (targets specific subscription if endpoint given, all otherwise) |
+| GET | `/api/health` | — | Health check — ping to keep Render awake |
+
+All routes return JSON. Errors return `{ error: "message" }` with an appropriate HTTP status code.
 | POST | `/api/habits/bulk` | Batch upsert (migration use only) |
 | DELETE | `/api/habits/:date` | Delete a single day's log |
 

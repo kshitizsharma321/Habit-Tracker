@@ -17,6 +17,7 @@ export default function NotificationSettings() {
     reminderTime,
     loading,
     error,
+    pushReceived,
     enable,
     disable,
     updateTime,
@@ -89,6 +90,14 @@ export default function NotificationSettings() {
             Test now
           </button>
         </div>
+      )}
+
+      {pushReceived && (
+        <p className={styles.pushReceivedMsg}>
+          ✅ Push received by this browser! If no notification appeared, check
+          macOS System Settings → Notifications → Google Chrome and make sure
+          it's set to <strong>Alerts</strong> or <strong>Banners</strong>.
+        </p>
       )}
 
       {permission === 'denied' && (

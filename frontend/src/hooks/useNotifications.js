@@ -31,6 +31,7 @@ export function useNotifications() {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
+  const [pushReceived, setPushReceived] = useState(false);
 
   // On mount: verify the Service Worker push subscription still exists
   useEffect(() => {
@@ -44,6 +45,20 @@ export function useNotifications() {
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for messages from the Service Worker (e.g. PUSH_RECEIVED)
+  useEffect(() => {
+    if (!isSupported) return;
+    const handler = (event) => {
+      if (event.data?.type === 'PUSH_RECEIVED') {
+        setPushReceived(true);
+        // Reset the flag after 8 seconds so it can fire again on next test
+        setTimeout(() => setPushReceived(false), 8000);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, [isSupported]);
 
   const enable = useCallback(async (time) => {
     if (!isSupported) return;
@@ -130,15 +145,26 @@ export function useNotifications() {
     } catch { /* non-critical — time saved locally already */ }
   }, [isEnabled]);
 
-  // Trigger an immediate test push — useful to verify the full pipeline works
+  // Trigger an immediate test push — sends only to THIS browser's subscription
   const testPush = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setPushReceived(false);
     try {
-      const res = await fetch(`${API_URL}/test-push`, { method: 'POST' });
+      // Get the current browser's push subscription endpoint
+      const swReg = await navigator.serviceWorker.ready;
+      const sub = await swReg.pushManager.getSubscription();
+      if (!sub) {
+        throw new Error('No push subscription found in this browser — disable and re-enable reminders to create one');
+      }
+      const res = await fetch(`${API_URL}/test-push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Test push failed');
-      if (data.sent === 0) throw new Error('Push sent but no subscriptions found — try re-enabling reminders');
+      if (data.sent === 0) throw new Error(data.message ?? 'Subscription not found on server — disable and re-enable reminders');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -146,5 +172,5 @@ export function useNotifications() {
     }
   }, []);
 
-  return { isSupported, permission, isEnabled, reminderTime, loading, error, enable, disable, updateTime, testPush };
+  return { isSupported, permission, isEnabled, reminderTime, loading, error, pushReceived, enable, disable, updateTime, testPush };
 }
