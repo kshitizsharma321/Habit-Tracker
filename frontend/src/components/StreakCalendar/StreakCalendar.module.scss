@@ -1,0 +1,85 @@
+// Calendar cell colors based on response state and theme
+.day {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(11px, 1.4vw, 15px);
+  font-weight: 600;
+  cursor: default;
+  border: 1px solid transparent;
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
+  color: var(--text-secondary);
+
+  &:hover {
+    filter: brightness(1.15);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  }
+
+  &.today {
+    box-shadow: 0 0 0 2px var(--accent-color);
+    border-color: var(--accent-color);
+  }
+}
+
+.yes {
+  background-color: var(--success-color);
+  color: #fff;
+}
+
+.no {
+  background-color: var(--danger-color);
+  color: #fff;
+}
+
+// Today not yet logged — neutral gray placeholder
+.todayUnlogged {
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.empty {
+  aspect-ratio: 1;
+  visibility: hidden;
+}
+
+.dayLabel {
+  text-align: center;
+  font-size: clamp(10px, 1.2vw, 13px);
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding-bottom: 4px;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.legendDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+
+  &.yes  { background-color: var(--success-color); }
+  &.no   { background-color: var(--danger-color); }
+  // "today" dot reuses the today outline style
+  &.today {
+    background-color: var(--bg-secondary);
+    border: 2px solid var(--accent-color);
+  }
+}
+
+.infoBar {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-top: 8px;
+  min-height: 18px;
+}

@@ -1,0 +1,147 @@
+// History — collapsible year/month accordion
+
+.historyContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+// ── Year block ────────────────────────────────────────────────────────────────
+.yearBlock {
+  border: 1px solid var(--border-color);
+  border-radius: 0.875rem;
+  overflow: hidden;
+  animation: fadeIn 0.25s ease;
+}
+
+.yearHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1.25rem;
+  background: var(--bg-secondary);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s;
+
+  &:hover {
+    background: var(--border-color);
+  }
+}
+
+.yearLabel {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.yearBadge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+// ── Month block ───────────────────────────────────────────────────────────────
+.monthsContainer {
+  padding: 0.625rem 0.875rem;
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.monthBlock {
+  border: 1px solid var(--border-color);
+  border-radius: 0.625rem;
+  overflow: hidden;
+}
+
+.monthHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.875rem;
+  background: var(--bg-primary);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.2s;
+
+  &:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.monthName {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.monthBadge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+// ── Chevron ───────────────────────────────────────────────────────────────────
+.chevron {
+  font-size: 0.65rem;
+  color: var(--text-secondary);
+  transition: transform 0.2s ease;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+// ── Entry cards grid ─────────────────────────────────────────────────────────
+.entriesGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+  padding: 0.625rem 0.875rem 0.75rem;
+
+  @media (min-width: 480px)  { grid-template-columns: repeat(3, 1fr); }
+  @media (min-width: 768px)  { grid-template-columns: repeat(4, 1fr); }
+  @media (min-width: 1024px) { grid-template-columns: repeat(5, 1fr); }
+}
+
+.entryCard {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow);
+  }
+}
+
+.yesBorder  { border-left: 3px solid var(--success-color); }
+.noBorder   { border-left: 3px solid var(--danger-color); }
+.skipBorder { border-left: 3px solid var(--bg-secondary); }
+
+.dateText {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: clamp(12px, 1.2vw, 14px);
+}

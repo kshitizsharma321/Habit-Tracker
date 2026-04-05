@@ -1,0 +1,55 @@
+// LogEntry card — borders reflect already-logged state
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+  transition: border-color 0.3s ease;
+  animation: fadeIn 0.3s ease;
+}
+
+.successBorder {
+  border-color: var(--success-color);
+}
+
+.failureBorder {
+  border-color: var(--danger-color);
+}
+
+// Subtle card flash after logging
+.successAnimation {
+  animation: quickPulse 0.35s ease-out;
+}
+
+.failureAnimation {
+  animation: quickShake 0.35s ease-out;
+}
+
+.dateInput {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 6px 10px;
+  font-size: 14px;
+  width: 100%;
+  max-width: 220px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+}
+
+.hint {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: 0.75rem;
+  padding: 7px 12px;
+  background: rgba(99, 102, 241, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  display: inline-block;
+}
