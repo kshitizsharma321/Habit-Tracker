@@ -44,7 +44,7 @@ export default function NotificationSettings() {
   };
 
   return (
-    <div className={`ht-card p-5 ${styles.card}`}>
+    <div className={`ht-card p-5 mb-6 ${styles.card}`}>
       <div className={styles.header}>
         <div>
           <h5 className="font-semibold text-base text-text-primary">🔔 Daily Reminder</h5>
