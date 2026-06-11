@@ -26,6 +26,9 @@ tracker.html
 # Local-only VS Code / Copilot workspace config
 .github/
 
+# One-off maintenance scripts (run locally against Atlas, not part of the app)
+backend/scripts/
+
 # Claude Code — project memory and local instructions (personal, not for the repo)
 CLAUDE.md
 .claude/
