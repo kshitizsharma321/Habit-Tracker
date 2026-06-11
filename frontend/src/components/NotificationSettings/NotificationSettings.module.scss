@@ -71,6 +71,7 @@
 
 .timePicker {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   margin-top: 0.875rem;
@@ -78,18 +79,41 @@
   border-top: 1px solid var(--border-color);
 }
 
-.timeInput {
+.timeSelects {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.timeSep {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  line-height: 1;
+  padding: 0 1px;
+}
+
+.timeSelect {
+  appearance: none;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--text-primary);
-  padding: 5px 10px;
-  font-size: 14px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  text-align: center;
 
   &:focus {
     outline: none;
     border-color: var(--accent-color);
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  }
+
+  &:hover {
+    border-color: var(--accent-color);
   }
 }
 

@@ -4,25 +4,21 @@ import styles from './StreakCalendar.module.scss';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export default function StreakCalendar({ habitData }) {
+export default function StreakCalendar({ habitData, definition }) {
   const [infoText, setInfoText] = useState('');
+  const hasAnyData = Object.keys(habitData).length > 0;
 
-  // Build a 5-week grid (5 rows × 7 cols), starting from the Sunday
-  // 4 weeks before the current week's Sunday.
-  const { grid, todayKey } = useMemo(() => {
+  const { grid } = useMemo(() => {
     const today = new Date();
     const todayKey = getDateKey(today);
 
-    // Find Sunday of the current week
     const startOfCurrentWeek = new Date(today);
     startOfCurrentWeek.setDate(today.getDate() - today.getDay());
     startOfCurrentWeek.setHours(0, 0, 0, 0);
 
-    // Go back 4 more weeks
     const startDate = new Date(startOfCurrentWeek);
     startDate.setDate(startDate.getDate() - 28);
 
-    // Build 5 rows × 7 cols = 35 cells
     const grid = [];
     for (let row = 0; row < 5; row++) {
       const week = [];
@@ -30,15 +26,13 @@ export default function StreakCalendar({ habitData }) {
         const d = new Date(startDate);
         d.setDate(startDate.getDate() + row * 7 + col);
         const key = getDateKey(d);
-        // Cells beyond today are empty placeholders
         if (d > today) {
           week.push(null);
         } else {
           week.push({
             key,
             dayNum: d.getDate(),
-            // null = today not yet logged; 'yes'/'no' = explicitly recorded
-            response: habitData[key] ?? null,
+            value: habitData[key] ?? null,
             isToday: key === todayKey,
             display: dateFormatters.display(d),
           });
@@ -46,35 +40,33 @@ export default function StreakCalendar({ habitData }) {
       }
       grid.push(week);
     }
-
-    return { grid, todayKey };
+    return { grid };
   }, [habitData]);
 
-  const responseClass = (r, isToday) => {
-    if (r === 'yes') return styles.yes;
-    if (r === 'no') return styles.no;
-    // r === null: today not yet logged, or a past cell with no entry
-    return isToday ? styles.todayUnlogged : styles.no;
-  };
+  function getCellStyle(r, isToday) {
+    if (r === 'yes' || (typeof r === 'number' && r > 0)) return styles.yes;
+    if (r === 'no' || r === 0) return styles.no;
+    if (r === null) return isToday ? styles.todayUnlogged : styles.neutral;
+    return styles.neutral;
+  }
 
-  const cellLabel = (r, isToday) => {
-    if (r === 'yes') return '✅ Logged';
-    if (r === 'no') return '❌ Missed';
-    return isToday ? '⏳ Not logged yet' : '❌ Missed';
-  };
+  function getCellLabel(r, isToday) {
+    if (r === 'yes' || (typeof r === 'number' && r > 0)) {
+       return typeof r === 'number' ? `✅ ${r}${definition?.unit ? ' ' + definition.unit : ''}` : '✅ Logged';
+    }
+    if (r === 'no' || r === 0) return '❌ Missed';
+    if (r === null) return isToday ? '⏳ Not logged yet' : 'No data';
+    return 'No data';
+  }
 
   return (
     <div>
-      {/* Day labels */}
       <div className="grid grid-cols-7 gap-1 mb-1">
         {WEEKDAYS.map((d) => (
-          <span key={d} className={styles.dayLabel}>
-            {d}
-          </span>
+          <span key={d} className={styles.dayLabel}>{d}</span>
         ))}
       </div>
 
-      {/* 5-week grid */}
       <div className="flex flex-col gap-1">
         {grid.map((week, wi) => (
           <div key={wi} className="grid grid-cols-7 gap-1">
@@ -84,15 +76,11 @@ export default function StreakCalendar({ habitData }) {
               ) : (
                 <div
                   key={cell.key}
-                  className={`${styles.day} ${responseClass(cell.response, cell.isToday)} ${cell.isToday ? styles.today : ''}`}
-                  title={`${cell.display}: ${cellLabel(cell.response, cell.isToday)}`}
-                  onMouseEnter={() =>
-                    setInfoText(`${cell.display} — ${cellLabel(cell.response, cell.isToday)}`)
-                  }
+                  className={`${styles.day} ${getCellStyle(cell.value, cell.isToday)} ${cell.isToday ? styles.today : ''}`}
+                  title={`${cell.display}: ${getCellLabel(cell.value, cell.isToday)}`}
+                  onMouseEnter={() => setInfoText(`${cell.display} — ${getCellLabel(cell.value, cell.isToday)}`)}
                   onMouseLeave={() => setInfoText('')}
-                  onClick={() =>
-                    setInfoText(`${cell.display} — ${cellLabel(cell.response, cell.isToday)}`)
-                  }
+                  onClick={() => setInfoText(`${cell.display} — ${getCellLabel(cell.value, cell.isToday)}`)}
                 >
                   {cell.dayNum}
                 </div>
@@ -102,17 +90,21 @@ export default function StreakCalendar({ habitData }) {
         ))}
       </div>
 
-      {/* Tap/hover info bar (useful on mobile) */}
       <p className={styles.infoBar}>{infoText || '\u00A0'}</p>
 
-      {/* Legend */}
       <div className={styles.legend}>
         <div className={`${styles.legendDot} ${styles.today}`} />
         <span>Today</span>
         <div className={`${styles.legendDot} ${styles.yes}`} />
         <span>Yes</span>
         <div className={`${styles.legendDot} ${styles.no}`} />
-        <span>No / missed</span>
+        <span>No</span>
+        {!hasAnyData && (
+          <>
+            <div className={`${styles.legendDot} ${styles.neutral}`} />
+            <span>No data</span>
+          </>
+        )}
       </div>
     </div>
   );

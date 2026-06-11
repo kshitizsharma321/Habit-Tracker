@@ -33,6 +33,13 @@
   color: #fff;
 }
 
+// Neutral state — user has no data entry for this date
+.neutral {
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
 // Today not yet logged — neutral gray placeholder
 .todayUnlogged {
   background-color: var(--bg-secondary);

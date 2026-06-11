@@ -5,7 +5,13 @@ const cors = require('cors');
 const cron = require('node-cron');
 const webpush = require('web-push');
 const Habit = require('./models/Habit');
+const HabitDefinition = require('./models/HabitDefinition');
 const Subscription = require('./models/Subscription');
+const Backup = require('./models/Backup');
+const authRoutes = require('./routes/auth');
+const habitDefRoutes = require('./routes/habitDefinitions');
+const adminRoutes = require('./routes/admin');
+const { requireAuth } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,7 +24,7 @@ const allowedOrigins = process.env.FRONTEND_URL
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '1mb' }));
 
-// VAPID setup for Web Push (only active if keys are configured)
+// VAPID setup
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
     'mailto:reminder@habit-tracker.app',
@@ -28,113 +34,61 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 }
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
+mongoose.connect(process.env.MONGODB_URI)
+.then(async () => {
+  console.log('✅ Connected to MongoDB');
+  await ensureIndexes();
 })
-.then(() => console.log('✅ Connected to MongoDB'))
 .catch((err) => console.error('❌ MongoDB connection error:', err));
 
-// Routes
-
-// Get all habit data
-app.get('/api/habits', async (req, res) => {
+/**
+ * Ensure indexes match current schemas.
+ */
+async function ensureIndexes() {
   try {
-    const habits = await Habit.find().sort({ date: 1 });
-    
-    // Convert to object format { "2026-01-01": "yes", "2026-01-02": "no" }
-    const habitData = {};
-    habits.forEach(habit => {
-      habitData[habit.date] = habit.response;
-    });
-    
-    res.json(habitData);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch habits', message: error.message });
-  }
-});
+    try { await Habit.collection.dropIndex('date_1'); } catch {}
+    try { await Habit.collection.dropIndex('userId_1_date_1'); } catch {}
+    try { await Subscription.collection.dropIndex('endpoint_1'); } catch {}
 
-// Save or update a habit entry
-app.post('/api/habits', async (req, res) => {
-  try {
-    const { date, response } = req.body;
-    
-    if (!date || !response) {
-      return res.status(400).json({ error: 'Date and response are required' });
-    }
-    
-    if (!['yes', 'no'].includes(response)) {
-      return res.status(400).json({ error: 'Response must be "yes" or "no"' });
-    }
-    
-    // Update if exists, create if not
-    const habit = await Habit.findOneAndUpdate(
-      { date },
-      { response },
-      { new: true, upsert: true }
-    );
-    
-    res.json({ success: true, habit });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to save habit', message: error.message });
+    await Habit.syncIndexes();
+    await HabitDefinition.syncIndexes();
+    await Subscription.syncIndexes();
+  } catch (err) {
+    console.error('Index sync error:', err.message);
   }
-});
+}
 
-// Bulk save/update habits (for migration or batch operations)
-app.post('/api/habits/bulk', async (req, res) => {
-  try {
-    const habitData = req.body; // Object with date keys and response values
-    
-    if (typeof habitData !== 'object') {
-      return res.status(400).json({ error: 'Invalid data format' });
-    }
-    
-    const operations = Object.entries(habitData).map(([date, response]) => ({
-      updateOne: {
-        filter: { date },
-        update: { response },
-        upsert: true
-      }
-    }));
-    
-    if (operations.length > 0) {
-      await Habit.bulkWrite(operations);
-    }
-    
-    res.json({ success: true, count: operations.length });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to save habits in bulk', message: error.message });
-  }
-});
 
-// Delete a habit entry
-app.delete('/api/habits/:date', async (req, res) => {
-  try {
-    const { date } = req.params;
-    await Habit.findOneAndDelete({ date });
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to delete habit', message: error.message });
-  }
-});
 
-// Health check
+// Auth routes (public)
+app.use('/api/auth', authRoutes);
+
+// Admin routes (protected)
+app.use('/api/admin', adminRoutes);
+
+// Habit Definitions CRUD + entry routes
+app.use('/api/habit-definitions', habitDefRoutes);
+
+
+
+// Health check (public)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
 });
 
-// ── Push notification subscriptions ───────────────────────────────────────────
+// ── Push notification subscriptions (protected) ─────────────────────────
 
-// Save or update a push subscription + reminder time
-app.post('/api/subscriptions', async (req, res) => {
+app.post('/api/subscriptions', requireAuth, async (req, res) => {
   try {
     const { subscription, reminderTime } = req.body;
     if (!subscription?.endpoint || !subscription?.keys) {
       return res.status(400).json({ error: 'Invalid subscription object' });
     }
+    await Subscription.deleteMany({ endpoint: subscription.endpoint, userId: { $ne: req.user._id } });
     await Subscription.findOneAndUpdate(
       { endpoint: subscription.endpoint },
       {
+        userId: req.user._id,
         endpoint: subscription.endpoint,
         keys: subscription.keys,
         reminderTime: reminderTime ?? '21:00',
@@ -147,8 +101,7 @@ app.post('/api/subscriptions', async (req, res) => {
   }
 });
 
-// Remove a push subscription (user disabled reminders)
-app.delete('/api/subscriptions', async (req, res) => {
+app.delete('/api/subscriptions', requireAuth, async (req, res) => {
   try {
     const { endpoint } = req.body;
     if (!endpoint) return res.status(400).json({ error: 'Endpoint required' });
@@ -159,36 +112,33 @@ app.delete('/api/subscriptions', async (req, res) => {
   }
 });
 
-// ── Daily reminder cron job ────────────────────────────────────────────────────
-// Runs every minute. Sends a push to any subscription whose reminderTime matches
-// the current IST time (HH:MM). Render free tier must be kept awake (e.g. UptimeRobot)
-// for this to fire reliably — ping /api/health every 5 minutes.
+// ── Daily reminder cron job ────────────────────────────────────────────
 
 async function sendPush(sub, payload) {
-  // Convert Mongoose subdocument to plain object so web-push receives a clean { p256dh, auth }
   return webpush.sendNotification(
     { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
     payload
   );
 }
 
-// Test endpoint — sends an immediate push to the requesting browser's subscription
-// Body: { endpoint: string } — if omitted, falls back to all subscriptions
-app.post('/api/test-push', async (req, res) => {
+app.post('/api/test-push', requireAuth, async (req, res) => {
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
     return res.status(503).json({ error: 'VAPID keys not configured on the backend' });
   }
   const { endpoint } = req.body ?? {};
   let subs;
   if (endpoint) {
-    // Target only the subscription for THIS browser
     const sub = await Subscription.findOne({ endpoint }).catch(() => null);
     if (!sub) {
       return res.json({ sent: 0, message: 'Your browser subscription was not found on the server — disable and re-enable reminders to register it' });
     }
+    if (String(sub.userId) !== String(req.user._id)) {
+      sub.userId = req.user._id;
+      await sub.save();
+    }
     subs = [sub];
   } else {
-    subs = await Subscription.find({}).catch(() => []);
+    subs = await Subscription.find({ userId: req.user._id }).catch(() => []);
     if (subs.length === 0) {
       return res.json({ sent: 0, message: 'No subscriptions found — enable reminders in the app first' });
     }
@@ -205,7 +155,7 @@ app.post('/api/test-push', async (req, res) => {
         sent++;
       } catch (err) {
         if (err.statusCode === 410 || err.statusCode === 404) {
-          await Subscription.deleteOne({ endpoint: sub.endpoint });
+          await Subscription.deleteOne({ _id: sub._id });
         }
       }
     })
@@ -233,7 +183,7 @@ cron.schedule('* * * * *', async () => {
         await sendPush(sub, payload);
       } catch (err) {
         if (err.statusCode === 410 || err.statusCode === 404) {
-          await Subscription.deleteOne({ endpoint: sub.endpoint });
+          await Subscription.deleteOne({ _id: sub._id });
         }
       }
     })
@@ -243,4 +193,56 @@ cron.schedule('* * * * *', async () => {
 // Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
+
+// ── Daily CSV backup cron (runs at 23:55 IST) ───────────────────────────
+// Format: Email, Habit Name, Tracking Type, Unit, Color, Icon, Date, Value
+// Enriched format ensures a backup is fully self-contained for admin restore.
+
+cron.schedule('55 18 * * *', async () => {
+  try {
+    const today = new Date();
+    const todayIST = new Date(today.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const dateKey = `${todayIST.getFullYear()}-${String(todayIST.getMonth() + 1).padStart(2, '0')}-${String(todayIST.getDate()).padStart(2, '0')}`;
+
+    const definitions = await HabitDefinition.find({}).populate('userId', 'email');
+    let written = 0;
+
+    for (const def of definitions) {
+      const entries = await Habit.find({ habitId: def._id, userId: def.userId }).sort({ date: 1 });
+      if (entries.length === 0) continue;
+
+      const userEmail = def.userId?.email || '';
+      const escapeCsv = (v) => (String(v).includes(',') ? `"${v}"` : String(v));
+
+      const rows = [['Email', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon', 'Date', 'Value']];
+      for (const e of entries) {
+        rows.push([
+          escapeCsv(userEmail),
+          escapeCsv(def.name),
+          escapeCsv(def.trackingType),
+          escapeCsv(def.unit || ''),
+          escapeCsv(def.color || ''),
+          escapeCsv(def.icon || ''),
+          e.date,
+          String(e.value),
+        ]);
+      }
+
+      const csv = rows.map((r) => r.join(',')).join('\n');
+
+      await Backup.findOneAndUpdate(
+        { userId: def.userId._id || def.userId, habitId: def._id, date: dateKey },
+        { csvContent: csv },
+        { upsert: true, new: true }
+      );
+      written++;
+    }
+
+    if (written > 0) {
+      console.log(`📦 Daily CSV backup: ${written} habits written for ${dateKey}`);
+    }
+  } catch (err) {
+    console.error('Backup cron error:', err.message);
+  }
 });

@@ -2,15 +2,22 @@ const mongoose = require('mongoose');
 
 const SubscriptionSchema = new mongoose.Schema(
   {
-    endpoint: { type: String, required: true, unique: true },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
+    endpoint: { type: String, required: true },
     keys: {
       p256dh: { type: String, required: true },
       auth:   { type: String, required: true },
     },
-    // HH:MM in IST (24-hour), e.g. "21:00"
     reminderTime: { type: String, default: '21:00' },
   },
   { timestamps: true }
 );
+
+SubscriptionSchema.index({ userId: 1, endpoint: 1 }, { unique: true });
 
 module.exports = mongoose.model('Subscription', SubscriptionSchema);

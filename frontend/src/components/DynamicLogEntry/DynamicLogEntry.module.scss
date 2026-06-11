@@ -1,0 +1,34 @@
+.dateInput {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  cursor: pointer;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 30%, transparent);
+  }
+}
+
+.successAnimation {
+  animation: quickPulse 0.35s ease;
+}
+
+.failureAnimation {
+  animation: quickShake 0.35s ease;
+}
+
+@keyframes quickPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); border-color: var(--ht-success); }
+}
+
+@keyframes quickShake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}

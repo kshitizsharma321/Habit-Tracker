@@ -3,8 +3,8 @@ import { groupByMonth } from '../../utils/stats';
 import { dateFormatters, parseStoredDate } from '../../utils/dates';
 import styles from './History.module.scss';
 
-function entryBorderClass(response) {
-  if (response === 'yes') return styles.yesBorder;
+function entryBorderClass(val) {
+  if (val === 'yes') return styles.yesBorder;
   return styles.noBorder;
 }
 
@@ -130,7 +130,7 @@ export default function History({ habitData, rawData }) {
                     {monthsInYear.map((monthKey) => {
                       const monthExpanded = expandedMonths.has(monthKey);
                       const entries = byYear[year][monthKey];
-                      const yesCount = entries.filter((e) => e.response === 'yes').length;
+                      const yesCount = entries.filter((e) => e.value === 'yes').length;
 
                       return (
                         <div key={monthKey} className={styles.monthBlock}>
@@ -151,15 +151,15 @@ export default function History({ habitData, rawData }) {
                               {entries
                                 .slice()
                                 .reverse()
-                                .map(({ key, response }) => (
+                                .map(({ key, value }) => (
                                   <div
                                     key={key}
-                                    className={`${styles.entryCard} ${entryBorderClass(response)}`}
+                                    className={`${styles.entryCard} ${entryBorderClass(value)}`}
                                   >
                                     <span className={styles.dateText}>
                                       {dateFormatters.short(parseStoredDate(key))}
                                     </span>
-                                    <span>{response === 'yes' ? '✅' : '❌'}</span>
+                                    <span>{value === 'yes' ? '✅' : '❌'}</span>
                                   </div>
                                 ))}
                             </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../api/client';
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY ?? '';
 
 const LS_TIME_KEY    = 'ht_reminder_time';
@@ -33,26 +33,22 @@ export function useNotifications() {
   const [error, setError]     = useState(null);
   const [pushReceived, setPushReceived] = useState(false);
 
-  // On mount: verify the Service Worker push subscription still exists
   useEffect(() => {
     if (!isSupported || !isEnabled) return;
     navigator.serviceWorker.ready.then(async (reg) => {
       const sub = await reg.pushManager.getSubscription();
       if (!sub) {
-        // Subscription was lost (e.g. browser data cleared)
         setIsEnabled(false);
         localStorage.setItem(LS_ENABLED_KEY, 'false');
       }
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Listen for messages from the Service Worker (e.g. PUSH_RECEIVED)
   useEffect(() => {
     if (!isSupported) return;
     const handler = (event) => {
       if (event.data?.type === 'PUSH_RECEIVED') {
         setPushReceived(true);
-        // Reset the flag after 8 seconds so it can fire again on next test
         setTimeout(() => setPushReceived(false), 8000);
       }
     };
@@ -69,27 +65,20 @@ export function useNotifications() {
     setLoading(true);
     setError(null);
     try {
-      // 1. Ask for browser permission
       const perm = await Notification.requestPermission();
       setPermission(perm);
       if (perm !== 'granted') throw new Error('Notification permission was denied');
 
-      // 2. Register Service Worker and wait until it's fully ACTIVE
       const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
-      // navigator.serviceWorker.ready resolves only when a SW is active —
-      // using reg directly may still be in 'installing' state and fail to subscribe
       const readyReg = await navigator.serviceWorker.ready;
 
-      // 3. Subscribe to Web Push
       const sub = await readyReg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
 
-      // 4. Save subscription + reminder time on the backend
-      const res = await fetch(`${API_URL}/subscriptions`, {
+      const res = await apiFetch('/subscriptions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscription: sub.toJSON(), reminderTime: time }),
       });
       if (!res.ok) throw new Error('Failed to save subscription on server');
@@ -112,9 +101,8 @@ export function useNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (sub) {
-        await fetch(`${API_URL}/subscriptions`, {
+        await apiFetch('/subscriptions', {
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint: sub.endpoint }),
         });
         await sub.unsubscribe();
@@ -128,7 +116,6 @@ export function useNotifications() {
     }
   }, []);
 
-  // Update reminder time — saves locally + pushes to backend if currently enabled
   const updateTime = useCallback(async (time) => {
     setReminderTime(time);
     localStorage.setItem(LS_TIME_KEY, time);
@@ -137,29 +124,25 @@ export function useNotifications() {
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.getSubscription();
       if (!sub) return;
-      await fetch(`${API_URL}/subscriptions`, {
+      await apiFetch('/subscriptions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscription: sub.toJSON(), reminderTime: time }),
       });
-    } catch { /* non-critical — time saved locally already */ }
+    } catch { /* non-critical */ }
   }, [isEnabled]);
 
-  // Trigger an immediate test push — sends only to THIS browser's subscription
   const testPush = useCallback(async () => {
     setLoading(true);
     setError(null);
     setPushReceived(false);
     try {
-      // Get the current browser's push subscription endpoint
       const swReg = await navigator.serviceWorker.ready;
       const sub = await swReg.pushManager.getSubscription();
       if (!sub) {
         throw new Error('No push subscription found in this browser — disable and re-enable reminders to create one');
       }
-      const res = await fetch(`${API_URL}/test-push`, {
+      const res = await apiFetch('/test-push', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint: sub.endpoint }),
       });
       const data = await res.json();

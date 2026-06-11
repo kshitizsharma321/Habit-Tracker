@@ -25,3 +25,10 @@ tracker.html
 
 # Local-only VS Code / Copilot workspace config
 .github/
+
+# Claude Code — project memory and local instructions (personal, not for the repo)
+CLAUDE.md
+.claude/
+
+# Stray patch files
+*.patch
