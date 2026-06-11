@@ -31,7 +31,7 @@ function DeleteDialog({ habit, isOpen, onClose, onConfirm, isDeleting }) {
 }
 
 export default function ManagePage() {
-  const { definitions, createHabit, isCreating, updateHabit, isUpdating, deleteHabit, isDeleting, changeType, isTypeChanging } = useOutletContext();
+  const { definitions, defsLoading, createHabit, isCreating, updateHabit, isUpdating, deleteHabit, isDeleting, changeType, isTypeChanging } = useOutletContext();
   const [activeTab, setActiveTab] = useState('list');
   const [editingId, setEditingId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -124,7 +124,7 @@ export default function ManagePage() {
         </TabsList>
 
         <TabsContent value="list">
-          <HabitList definitions={definitions} startEdit={startEdit} setDeleteTarget={setDeleteTarget} />
+          <HabitList definitions={definitions} startEdit={startEdit} setDeleteTarget={setDeleteTarget} loading={defsLoading} />
         </TabsContent>
 
         <TabsContent value="add">

@@ -11,25 +11,55 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Card } from '../components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+import { Skeleton } from '../components/ui/skeleton';
 import { downloadCSV, calculateStreaks, calculateStreaksFromGoal } from '../utils/stats';
 import { TYPE_LABELS } from '../constants/habits';
 
 // ── Streak messages ────────────────────────────────────────────────────────────
 const STREAK_CONFIG = [
-  [100, { icon: '🏆', boost: "TRIPLE DIGITS — YOU'RE A LEGEND!", tip: "Only 1% of habit-builders reach this. Rare. Exceptional. Guard it fiercely." }],
-  [90,  { icon: '💎', boost: '3 months of pure discipline!', tip: "Diamond-tier consistency. Your identity has shifted — this habit is part of who you are." }],
-  [60,  { icon: '🚀', boost: '2 months strong — elite territory!', tip: "Only ~8% hit 60 days. You've done what most only talk about." }],
-  [30,  { icon: '🔥', boost: 'One full month — habit officially formed!', tip: "Neuroscience confirms: 30+ days rewires your brain. This habit is yours now." }],
-  [21,  { icon: '⚡', boost: '21 days — the momentum is real!', tip: "Three weeks of consistency builds genuine neural momentum. Don't break the chain!" }],
-  [14,  { icon: '💪', boost: 'Two weeks of solid commitment!', tip: "You've proven you can do this. The hardest part is behind you — keep going." }],
-  [7,   { icon: '🌟', boost: 'One full week — strong foundation!', tip: "Week one is what every great streak is built on. Stack another 7 days!" }],
-  [3,   { icon: '✨', boost: '3 days in a row — momentum building!', tip: "Small wins compound into transformational results. Show up again tomorrow." }],
-  [1,   { icon: '🎯', boost: 'Day one done — the journey begins!', tip: "Every legendary streak started at 1. The hardest step is the first one." }],
-  [0,   { icon: '💡', boost: 'Ready to build your streak?', tip: "Log today and light the fire. Every great streak started exactly here — at zero." }],
+  [365, (n) => ({ icon: '🎆', boost: `${n} days — a FULL YEAR of pure consistency!`, tip: "You've completed 365 consecutive days. You are unstoppable. This habit is now your identity." })],
+  [300, (n) => ({ icon: '👑', boost: `${n} days — you've reached legend status!`, tip: "Only elite habit-builders reach 300 days. You're in the 0.1% club." })],
+  [250, (n) => ({ icon: '💎', boost: `${n} days — unbreakable commitment!`, tip: "250 consecutive days proves you are unshakeable. Nothing can stop you now." })],
+  [200, (n) => ({ icon: '🚀', boost: `${n} days — soaring into the stratosphere!`, tip: "Two hundred days of consistency. You've transcended ordinary habits." })],
+  [180, (n) => ({ icon: '⭐', boost: `${n} days — half a year down!`, tip: "Six months of showing up, every single day. Your dedication is legendary." })],
+  [150, (n) => ({ icon: '🔥', boost: `${n} days — absolute fire!`, tip: "Five months of unstoppable momentum. Your habit is forged in steel." })],
+  [120, (n) => ({ icon: '✨', boost: `${n} days — four months of glory!`, tip: "Four solid months. You've proven this habit is permanent." })],
+  [100, (n) => ({ icon: '🏆', boost: `${n} days — TRIPLE DIGITS!`, tip: "You've hit 100. Only 1% of habit-builders ever reach this. You're legendary." })],
+  [90,  (n) => ({ icon: '💫', boost: `${n} days — three months of pure discipline!`, tip: "90 days in. Your brain has completely rewired around this habit." })],
+  [80,  (n) => ({ icon: '⚡', boost: `${n} days — getting close to 100!`, tip: "You're in the final stretch. Ten more days until you hit triple digits." })],
+  [70,  (n) => ({ icon: '🌟', boost: `${n} days — unstoppable momentum!`, tip: "Seven weeks down. You've proven you're not just motivated, you're committed." })],
+  [60,  (n) => ({ icon: '🎯', boost: `${n} days — two months of consistency!`, tip: "60 days is where habits become unbreakable. You're officially unstoppable." })],
+  [50,  (n) => ({ icon: '🔮', boost: `${n} days — halfway to 100!`, tip: "Fifty consecutive days. You're more than halfway to that triple-digit milestone." })],
+  [45,  (n) => ({ icon: '💪', boost: `${n} days — almost at two months!`, tip: "You're just two weeks away from your two-month mark. Don't stop now." })],
+  [40,  (n) => ({ icon: '🌈', boost: `${n} days — hitting your stride!`, tip: "Forty days in. The habit is becoming automatic, the urge to skip is fading." })],
+  [35,  (n) => ({ icon: '🎪', boost: `${n} days — five solid weeks!`, tip: "Over a month done. You're proving this isn't just a phase." })],
+  [30,  (n) => ({ icon: '🔥', boost: `${n} days — one full month formed!`, tip: "Neuroscience milestone: 30+ days rewires your brain. This habit is yours." })],
+  [28,  (n) => ({ icon: '🌙', boost: `${n} days — almost a month!`, tip: "Four weeks down. Just two more days until you hit the 30-day brain-rewrite threshold." })],
+  [25,  (n) => ({ icon: '🎁', boost: `${n} days — nearly there!`, tip: "25 days in. The final stretch to your one-month milestone." })],
+  [21,  (n) => ({ icon: '⚡', boost: `${n} days — momentum is real!`, tip: "21 days is the threshold where habits start feeling natural. You've crossed it." })],
+  [20,  (n) => ({ icon: '🎯', boost: `${n} days — one more week!`, tip: "20 days down. You're just one week away from the 21-day habit formation mark." })],
+  [18,  (n) => ({ icon: '🌟', boost: `${n} days — almost three weeks!`, tip: "You're within arm's reach of the 21-day psychological threshold." })],
+  [15,  (n) => ({ icon: '💎', boost: `${n} days — halfway to 30!`, tip: "Two and a half weeks in. You're halfway to your first major milestone." })],
+  [14,  (n) => ({ icon: '💪', boost: `${n} days — two solid weeks!`, tip: "You've proven you can do this for two weeks straight. Keep the chain going." })],
+  [12,  (n) => ({ icon: '✨', boost: `${n} days — almost there!`, tip: "Twelve days in. Just two more days until you hit the two-week mark." })],
+  [10,  (n) => ({ icon: '🎉', boost: `${n} days — double digits!`, tip: "Ten consecutive days. You've crossed into true consistency territory." })],
+  [9,   (n) => ({ icon: '🚀', boost: `${n} days — one more for double digits!`, tip: "Just one day away from hitting double digits. Do it today." })],
+  [8,   (n) => ({ icon: '🔥', boost: `${n} days — over a week!`, tip: "More than a week of consistency. You're building real momentum." })],
+  [7,   (n) => ({ icon: '🌟', boost: `${n} days — one full week!`, tip: "Seven days is a major psychological win. You've proven you're serious." })],
+  [6,   (n) => ({ icon: '✨', boost: `${n} days — almost a week!`, tip: "Just one more day until you hit your first seven-day milestone." })],
+  [5,   (n) => ({ icon: '🎯', boost: `${n} days — halfway to a week!`, tip: "Five days in and you're already seeing the habit take shape." })],
+  [4,   (n) => ({ icon: '💫', boost: `${n} days — nearly a week!`, tip: "Four days down. Three more and you'll hit your first week." })],
+  [3,   (n) => ({ icon: '⭐', boost: `${n} days — momentum building!`, tip: "Three consecutive days. Small wins compound into transformational results." })],
+  [2,   (n) => ({ icon: '🌱', boost: `${n} days — you're rolling!`, tip: "Two days in and already building momentum. Don't break the chain tomorrow." })],
+  [1,   (n) => ({ icon: '🎯', boost: `${n} day done — the journey begins!`, tip: "Every legendary streak started right here, at day one. You're on your way." })],
+  [0,   () => ({ icon: '💡', boost: 'Ready to start your streak?', tip: "Log today and light the fire. Every great streak starts exactly here, at zero." })],
 ];
 
 function getStreakMeta(n) {
-  return (STREAK_CONFIG.find(([t]) => n >= t) ?? STREAK_CONFIG.at(-1))[1];
+  const config = STREAK_CONFIG.find(([threshold]) => n >= threshold);
+  if (!config) return STREAK_CONFIG[STREAK_CONFIG.length - 1][1](n);
+  const [, metaFn] = config;
+  return typeof metaFn === 'function' ? metaFn(n) : metaFn;
 }
 
 // ── Streak banner ──────────────────────────────────────────────────────────────
@@ -97,6 +127,21 @@ function StreakBanner({ streak, definition }) {
   );
 }
 
+// ── Loading skeleton ─────────────────────────────────────────────────────────
+function DetailSkeleton() {
+  return (
+    <div className="space-y-4 mt-4">
+      <Skeleton className="h-40 w-full rounded-2xl" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-20 w-full rounded-xl" />
+        ))}
+      </div>
+      <Skeleton className="h-48 w-full rounded-xl" />
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function HabitDetailPage() {
   const { habitId } = useParams();
@@ -109,7 +154,7 @@ export default function HabitDetailPage() {
     [definitions, habitId],
   );
 
-  const { entries, rawEntries } = useHabitEntries(habitId, definition?.trackingType);
+  const { entries, rawEntries, isLoading: entriesLoading } = useHabitEntries(habitId, definition?.trackingType);
 
   const streak = useMemo(() => {
     if (definition?.trackingType === 'completion') {
@@ -166,6 +211,9 @@ export default function HabitDetailPage() {
       </div>
 
       {/* Tabs */}
+      {entriesLoading ? (
+        <DetailSkeleton />
+      ) : (
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="w-full">
           <TabsTrigger value="overview" className="flex-1">Overview</TabsTrigger>
@@ -205,6 +253,7 @@ export default function HabitDetailPage() {
           <History habitData={entries} rawData={rawEntries} />
         </TabsContent>
       </Tabs>
+      )}
     </div>
   );
 }

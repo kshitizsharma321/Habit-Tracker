@@ -16,6 +16,7 @@ import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Switch } from '../components/ui/switch';
 import { Badge } from '../components/ui/badge';
+import { Skeleton } from '../components/ui/skeleton';
 import toast from 'react-hot-toast';
 
 export default function AdminDashboard() {
@@ -23,8 +24,8 @@ export default function AdminDashboard() {
   const queryClient = useQueryClient();
   const [csvFile, setCsvFile] = useState(null);
 
-  const { data: stats } = useQuery({ queryKey: ['admin-stats'], queryFn: fetchAdminStats });
-  const { data: users } = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers });
+  const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ['admin-stats'], queryFn: fetchAdminStats });
+  const { data: users, isLoading: usersLoading } = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers });
   const { data: backups = [], isLoading: backupsLoading } = useQuery({
     queryKey: ['admin-backups'],
     queryFn: fetchAdminBackups,
@@ -155,7 +156,11 @@ export default function AdminDashboard() {
             ].map(({ label, value, icon }) => (
               <Card key={label} className="p-5 text-center">
                 <p className="text-2xl mb-1">{icon}</p>
-                <p className="text-3xl font-bold" style={{ color: 'var(--text-primary)' }}>{value}</p>
+                {statsLoading ? (
+                  <Skeleton className="h-9 w-16 mx-auto" />
+                ) : (
+                  <p className="text-3xl font-bold" style={{ color: 'var(--text-primary)' }}>{value}</p>
+                )}
                 <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{label}</p>
               </Card>
             ))}
@@ -168,17 +173,29 @@ export default function AdminDashboard() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Email</th>
+                  <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Username</th>
                   <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Name</th>
+                  <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Email</th>
                   <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Role</th>
                   <th className="py-2 font-semibold" style={{ color: 'var(--text-secondary)' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {users?.map((u) => (
+                {usersLoading
+                  ? Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="border-b border-border/50">
+                        {Array.from({ length: 5 }).map((__, j) => (
+                          <td key={j} className="py-2 pr-4"><Skeleton className="h-4 w-24" /></td>
+                        ))}
+                      </tr>
+                    ))
+                  : users?.map((u) => (
                   <tr key={u._id} className="border-b border-border/50">
-                    <td className="py-2 pr-4" style={{ color: 'var(--text-primary)' }}>{u.email}</td>
+                    <td className="py-2 pr-4 font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {u.username ? `@${u.username}` : '—'}
+                    </td>
                     <td className="py-2 pr-4" style={{ color: 'var(--text-secondary)' }}>{u.name || '—'}</td>
+                    <td className="py-2 pr-4" style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
                     <td className="py-2 pr-4">
                       <div className="flex items-center gap-2">
                         <Switch
@@ -195,7 +212,8 @@ export default function AdminDashboard() {
                         size="sm"
                         disabled={user._id === u._id || deleteMutation.isPending}
                         onClick={() => {
-                          if (window.confirm(`Delete ${u.email} and all their data?`)) {
+                          const label = u.username ? `@${u.username}` : u.email;
+                          if (window.confirm(`Delete ${label} and all their data?`)) {
                             deleteMutation.mutate(u._id);
                           }
                         }}

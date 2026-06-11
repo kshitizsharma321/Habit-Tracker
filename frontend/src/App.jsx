@@ -19,7 +19,16 @@ import LoadingScreen from './components/LoadingScreen';
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 2, staleTime: 1000 * 60 * 5 },
+    queries: {
+      // Mobile: don't refetch every time the app regains focus (tab switch,
+      // notification, lock/unlock) — this was the main source of perceived lag.
+      refetchOnWindowFocus: false,
+      // One retry is enough; 2 made failures on flaky mobile networks take ~3x longer to surface.
+      retry: 1,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 5000),
+      staleTime: 1000 * 60 * 5,
+      gcTime: 1000 * 60 * 10,
+    },
   },
 });
 

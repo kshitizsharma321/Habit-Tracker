@@ -3,17 +3,51 @@ import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchDashboard } from '../api/habitDefinitionsApi';
 import { saveEntry } from '../api/entriesApi';
+
+import { getDateKey } from '../utils/dates';
 import DynamicLogEntry from '../components/DynamicLogEntry/DynamicLogEntry';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { Skeleton } from '../components/ui/skeleton';
 import toast from 'react-hot-toast';
+
+function TodaySkeleton({ count = 3 }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-9 w-24" />
+      </div>
+      {Array.from({ length: count }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-xl overflow-hidden"
+          style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)' }}
+        >
+          <Skeleton className="h-1 w-full rounded-none" />
+          <div className="p-4">
+            <div className="flex items-center gap-2.5 mb-4">
+              <Skeleton className="w-9 h-9 rounded-lg" />
+              <div className="flex-1 space-y-1.5">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+            <Skeleton className="h-10 w-full rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function TodayPage() {
   const { definitions, defsLoading } = useOutletContext();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: dashboardData } = useQuery({
+  const { data: dashboardData, isLoading: dashboardLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: fetchDashboard,
     staleTime: 1000 * 60,
@@ -24,12 +58,34 @@ export default function TodayPage() {
 
   const logMutation = useMutation({
     mutationFn: ({ habitId, date, value }) => saveEntry(habitId, { date, value }),
-    onSuccess: (_, { habitId }) => {
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      queryClient.invalidateQueries({ queryKey: ['habit-entries', habitId] });
-      toast.success('Logged!');
+    // Optimistic update: reflect the log instantly in the dashboard cache instead of
+    // waiting for the POST + a full dashboard refetch (heavy on mobile).
+    onMutate: async ({ habitId, date, value }) => {
+      await queryClient.cancelQueries({ queryKey: ['dashboard'] });
+      const previous = queryClient.getQueryData(['dashboard']);
+      const todayKey = getDateKey(new Date());
+      queryClient.setQueryData(['dashboard'], (old) => {
+        if (!old) return old;
+        const next = {
+          ...old,
+          todayEntries: { ...old.todayEntries },
+          allEntries: { ...old.allEntries, [habitId]: { ...(old.allEntries?.[habitId] || {}) } },
+        };
+        if (date === todayKey) next.todayEntries[habitId] = { value };
+        next.allEntries[habitId][date] = { value };
+        return next;
+      });
+      return { previous };
     },
-    onError: (err) => toast.error(err.message || 'Failed to save'),
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['dashboard'], ctx.previous);
+      toast.error(err.message || 'Failed to save');
+    },
+    onSuccess: () => toast.success('Logged!'),
+    // Mark the detail-page cache stale (it isn't mounted, so this won't trigger a refetch now).
+    onSettled: (_d, _e, { habitId }) => {
+      queryClient.invalidateQueries({ queryKey: ['habit-entries', habitId] });
+    },
   });
 
   const handleLog = useCallback(({ date, value }, habitId) => {
@@ -40,7 +96,10 @@ export default function TodayPage() {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
 
-  if (defsLoading) return null;
+  // Show skeletons until both the habit list and today's entries are ready.
+  if (defsLoading || (dashboardLoading && !dashboardData)) {
+    return <TodaySkeleton count={definitions.length || 3} />;
+  }
 
   // Empty state
   if (definitions.length === 0) {
