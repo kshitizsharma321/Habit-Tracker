@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const cron = require('node-cron');
 const webpush = require('web-push');
+const User = require('./models/User');
 const Habit = require('./models/Habit');
 const HabitDefinition = require('./models/HabitDefinition');
 const Subscription = require('./models/Subscription');
@@ -41,18 +42,28 @@ mongoose.connect(process.env.MONGODB_URI)
 })
 .catch((err) => console.error('❌ MongoDB connection error:', err));
 
-/**
- * Ensure indexes match current schemas.
- */
 async function ensureIndexes() {
   try {
     try { await Habit.collection.dropIndex('date_1'); } catch {}
     try { await Habit.collection.dropIndex('userId_1_date_1'); } catch {}
     try { await Subscription.collection.dropIndex('endpoint_1'); } catch {}
 
+    // Migrate Backup collection from old per-habit schema to new per-user schema.
+    // Drop the old compound index and remove legacy documents that had a habitId field.
+    try { await Backup.collection.dropIndex('userId_1_habitId_1_date_1'); } catch {}
+    try { await Backup.collection.deleteMany({ habitId: { $exists: true } }); } catch {}
+
+    // Normalize any isAdmin values stored as strings (e.g. "true") to proper booleans.
+    // This can happen if the field was set manually via Atlas or a shell command.
+    try { await User.collection.updateMany({ isAdmin: 'true' }, { $set: { isAdmin: true } }); } catch {}
+    try { await User.collection.updateMany({ isAdmin: 'false' }, { $set: { isAdmin: false } }); } catch {}
+    try { await User.collection.updateMany({ isAdmin: 1 }, { $set: { isAdmin: true } }); } catch {}
+    try { await User.collection.updateMany({ isAdmin: 0 }, { $set: { isAdmin: false } }); } catch {}
+
     await Habit.syncIndexes();
     await HabitDefinition.syncIndexes();
     await Subscription.syncIndexes();
+    await Backup.syncIndexes();
   } catch (err) {
     console.error('Index sync error:', err.message);
   }
@@ -195,9 +206,19 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
 
-// ── Daily CSV backup cron (runs at 23:55 IST) ───────────────────────────
-// Format: Email, Habit Name, Tracking Type, Unit, Color, Icon, Date, Value
-// Enriched format ensures a backup is fully self-contained for admin restore.
+// ── Daily backup cron (runs at 23:55 IST) ────────────────────────────────────
+// One CSV file per user covering ALL their habits and ALL entries.
+// Stored as a binary Buffer in MongoDB so admin can download → re-upload to restore.
+//
+// CSV columns: Username, Habit Name, Tracking Type, Unit, Color, Icon,
+//              Goal Enabled, Goal Value, Date, Value
+
+function escapeCsvCell(v) {
+  const s = String(v ?? '');
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s;
+}
 
 cron.schedule('55 18 * * *', async () => {
   try {
@@ -205,42 +226,54 @@ cron.schedule('55 18 * * *', async () => {
     const todayIST = new Date(today.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
     const dateKey = `${todayIST.getFullYear()}-${String(todayIST.getMonth() + 1).padStart(2, '0')}-${String(todayIST.getDate()).padStart(2, '0')}`;
 
-    const definitions = await HabitDefinition.find({}).populate('userId', 'email');
+    const users = await User.find({ isAdmin: { $ne: true } });
     let written = 0;
 
-    for (const def of definitions) {
-      const entries = await Habit.find({ habitId: def._id, userId: def.userId }).sort({ date: 1 });
-      if (entries.length === 0) continue;
+    for (const user of users) {
+      const definitions = await HabitDefinition.find({ userId: user._id }).sort({ order: 1 });
+      if (definitions.length === 0) continue;
 
-      const userEmail = def.userId?.email || '';
-      const escapeCsv = (v) => (String(v).includes(',') ? `"${v}"` : String(v));
+      const username = user.username || user.email || String(user._id);
+      const rows = [[
+        'Username', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon',
+        'Goal Enabled', 'Goal Value', 'Date', 'Value',
+      ]];
+      let entryCount = 0;
 
-      const rows = [['Email', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon', 'Date', 'Value']];
-      for (const e of entries) {
-        rows.push([
-          escapeCsv(userEmail),
-          escapeCsv(def.name),
-          escapeCsv(def.trackingType),
-          escapeCsv(def.unit || ''),
-          escapeCsv(def.color || ''),
-          escapeCsv(def.icon || ''),
-          e.date,
-          String(e.value),
-        ]);
+      for (const def of definitions) {
+        const entries = await Habit.find({ habitId: def._id, userId: user._id }).sort({ date: 1 });
+        for (const e of entries) {
+          rows.push([
+            escapeCsvCell(`@${username}`),
+            escapeCsvCell(def.name),
+            escapeCsvCell(def.trackingType),
+            escapeCsvCell(def.unit || ''),
+            escapeCsvCell(def.color || ''),
+            escapeCsvCell(def.icon || ''),
+            escapeCsvCell(def.goal?.enabled ? 'true' : 'false'),
+            escapeCsvCell(def.goal?.enabled ? def.goal.value : ''),
+            e.date,
+            escapeCsvCell(String(e.value)),
+          ]);
+          entryCount++;
+        }
       }
 
+      if (entryCount === 0) continue;
+
       const csv = rows.map((r) => r.join(',')).join('\n');
+      const fileData = Buffer.from(csv, 'utf8');
 
       await Backup.findOneAndUpdate(
-        { userId: def.userId._id || def.userId, habitId: def._id, date: dateKey },
-        { csvContent: csv },
+        { userId: user._id, date: dateKey },
+        { fileData, habitCount: definitions.length, entryCount },
         { upsert: true, new: true }
       );
       written++;
     }
 
     if (written > 0) {
-      console.log(`📦 Daily CSV backup: ${written} habits written for ${dateKey}`);
+      console.log(`📦 Daily backup: ${written} user file(s) written for ${dateKey}`);
     }
   } catch (err) {
     console.error('Backup cron error:', err.message);

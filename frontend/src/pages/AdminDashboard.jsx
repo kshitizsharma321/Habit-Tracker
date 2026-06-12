@@ -1,34 +1,195 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
 import {
   fetchAdminStats,
   fetchAdminUsers,
   deleteAdminUser,
-  updateAdminRole,
-  restoreAdminData,
-  fetchAdminBackups,
+  fetchAdminUserHabits,
+  fetchAdminUserBackups,
+  downloadUserBackup,
   restoreFromBackup,
+  restoreAdminData,
+  generateUserBackup,
+  deleteUserBackup,
 } from '../api/adminApi';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Switch } from '../components/ui/switch';
-import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '../components/ui/dialog';
 import toast from 'react-hot-toast';
 
+// ── Generic confirm modal ─────────────────────────────────────────────────────
+function ConfirmDialog({ open, title, description, confirmLabel = 'Confirm', variant = 'destructive', onConfirm, onClose, isPending }) {
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="mt-4">
+          <Button variant="outline" onClick={onClose} disabled={isPending}>Cancel</Button>
+          <Button variant={variant} onClick={onConfirm} disabled={isPending}>
+            {isPending ? 'Working…' : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Drag-and-drop CSV zone ────────────────────────────────────────────────────
+function CsvDropZone({ file, onFile }) {
+  const [dragOver, setDragOver] = useState(false);
+  const inputRef = useRef(null);
+
+  const handle = (f) => {
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.csv')) {
+      toast.error('Please upload a .csv file');
+      return;
+    }
+    onFile(f);
+  };
+
+  return (
+    <div
+      onClick={() => inputRef.current?.click()}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); handle(e.dataTransfer.files[0]); }}
+      className="relative flex flex-col items-center justify-center gap-2 rounded-xl p-8 cursor-pointer transition-colors select-none"
+      style={{
+        border: `2px dashed ${dragOver ? 'var(--accent-color)' : 'var(--border-color)'}`,
+        background: dragOver
+          ? 'color-mix(in srgb, var(--accent-color) 6%, var(--bg-secondary))'
+          : 'var(--bg-secondary)',
+      }}
+    >
+      <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={(e) => handle(e.target.files[0])} />
+      <span className="text-3xl">📂</span>
+      {file ? (
+        <>
+          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+            {(file.size / 1024).toFixed(1)} KB — click to change
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Drop CSV here or click to browse</p>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>Only .csv files accepted</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── User row with expandable habits ──────────────────────────────────────────
+function UserRow({ u, currentUserId, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const { data: habits, isLoading: habitsLoading } = useQuery({
+    queryKey: ['admin-user-habits', u._id],
+    queryFn: () => fetchAdminUserHabits(u._id),
+    enabled: expanded,
+    staleTime: 30_000,
+  });
+
+  return (
+    <>
+      <tr className="border-b border-border/50">
+        <td className="py-3 pr-4">
+          <button onClick={() => setExpanded((x) => !x)} className="flex items-center gap-2 text-left">
+            <span className="text-base w-4">{expanded ? '▾' : '▸'}</span>
+            <div>
+              <p className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>
+                {u.username ? `@${u.username}` : '—'}
+              </p>
+              {u.name && <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{u.name}</p>}
+            </div>
+          </button>
+        </td>
+        <td className="py-3 pr-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
+        <td className="py-3 pr-4 text-xs" style={{ color: 'var(--text-secondary)' }}>
+          {new Date(u.createdAt).toLocaleDateString()}
+        </td>
+        <td className="py-3">
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={currentUserId === u._id}
+            onClick={() => onDelete(u)}
+          >
+            Delete
+          </Button>
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr className="border-b border-border/20 bg-muted/20">
+          <td colSpan={4} className="py-2 pl-10 pr-4">
+            {habitsLoading ? (
+              <div className="flex gap-2 py-1">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+              </div>
+            ) : !habits?.length ? (
+              <p className="text-xs py-1" style={{ color: 'var(--text-secondary)' }}>No habits yet</p>
+            ) : (
+              <div className="flex flex-wrap gap-2 py-1">
+                {habits.map((h) => (
+                  <span
+                    key={h._id}
+                    className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
+                    style={{
+                      background: `color-mix(in srgb, ${h.color} 15%, var(--bg-secondary))`,
+                      color: h.color,
+                      border: `1px solid color-mix(in srgb, ${h.color} 30%, transparent)`,
+                    }}
+                  >
+                    {h.icon} {h.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [csvFile, setCsvFile] = useState(null);
 
-  const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ['admin-stats'], queryFn: fetchAdminStats });
-  const { data: users, isLoading: usersLoading } = useQuery({ queryKey: ['admin-users'], queryFn: fetchAdminUsers });
-  const { data: backups = [], isLoading: backupsLoading } = useQuery({
-    queryKey: ['admin-backups'],
-    queryFn: fetchAdminBackups,
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [restoreTarget, setRestoreTarget] = useState(null); // { date, userId, label }
+  const [deleteBackupTarget, setDeleteBackupTarget] = useState(null); // { date, userId, label }
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvPreview, setCsvPreview] = useState(null); // { text, rows, grouped }
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['admin-stats'],
+    queryFn: fetchAdminStats,
+  });
+  const { data: users = [], isLoading: usersLoading } = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: fetchAdminUsers,
+  });
+  const { data: userBackups = [], isLoading: backupsLoading } = useQuery({
+    queryKey: ['admin-user-backups', selectedUserId],
+    queryFn: () => fetchAdminUserBackups(selectedUserId),
+    enabled: !!selectedUserId,
   });
 
   const deleteMutation = useMutation({
@@ -37,123 +198,147 @@ export default function AdminDashboard() {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       toast.success('User deleted');
+      setDeleteTarget(null);
     },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const roleMutation = useMutation({
-    mutationFn: ({ id, isAdmin }) => updateAdminRole(id, isAdmin),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-      toast.success('Role updated');
-    },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => { toast.error(err.message); setDeleteTarget(null); },
   });
 
   const restoreMutation = useMutation({
-    mutationFn: restoreAdminData,
-    onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      toast.success(`Restored ${res.restored} entries. Errors: ${res.errors}`);
-      setCsvFile(null);
-      const input = document.getElementById('csv-upload');
-      if (input) input.value = '';
-    },
-    onError: (err) => toast.error(err.message),
-  });
-
-  const backupRestoreMutation = useMutation({
     mutationFn: restoreFromBackup,
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      toast.success(`Restored ${res.restored} entries from ${res.backupsProcessed} habit backups`);
+      toast.success(`Restored ${res.restored} entries${res.errors ? ` (${res.errors} errors)` : ''}`);
+      setRestoreTarget(null);
+    },
+    onError: (err) => { toast.error(err.message); setRestoreTarget(null); },
+  });
+
+  const csvRestoreMutation = useMutation({
+    mutationFn: restoreAdminData,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+      toast.success(`Imported ${res.restored} entries${res.errors ? ` (${res.errors} errors)` : ''}`);
+      setCsvFile(null);
+      setCsvPreview(null);
     },
     onError: (err) => toast.error(err.message),
   });
 
-  if (!user?.isAdmin) return <Navigate to="/" replace />;
+  const generateBackupMutation = useMutation({
+    mutationFn: generateUserBackup,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
+      toast.success(`Backup generated for ${res.date} — ${res.entryCount} entries`);
+    },
+    onError: (err) => toast.error(err.message || 'Failed to generate backup'),
+  });
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) setCsvFile(file);
+  const deleteBackupMutation = useMutation({
+    mutationFn: ({ userId, date }) => deleteUserBackup(userId, date),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
+      toast.success('Backup deleted');
+      setDeleteBackupTarget(null);
+    },
+    onError: (err) => { toast.error(err.message || 'Failed to delete backup'); setDeleteBackupTarget(null); },
+  });
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    if (selectedUserId) {
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
+    }
+    toast.success('Data refreshed');
   };
 
-  const handleProcessCsv = () => {
-    if (!csvFile) return;
+  if (!user?.isAdmin) return <Navigate to="/" replace />;
+
+  const selectedUser = users.find((u) => u._id === selectedUserId);
+
+  // Download a backup file from MongoDB
+  const handleDownload = async (userId, date, username) => {
+    setIsDownloading(true);
+    try {
+      const res = await downloadUserBackup(userId, date);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-${username}-${date}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err.message || 'Download failed');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  // Parse CSV file for preview and validate format
+  const handleCsvSelect = (file) => {
+    setCsvFile(file);
+    setCsvPreview(null);
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target.result;
-      // Split on actual newlines (not literal \n)
-      const lines = text.split('\n').filter((l) => l.trim().length > 0);
-      if (lines.length < 2) {
-        toast.error('CSV is empty or missing headers');
-        return;
-      }
+      const lines = text.split('\n').filter((l) => l.trim());
+      if (lines.length < 2) { toast.error('CSV is empty or missing a header row'); return; }
 
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-      const idx = (name) => headers.indexOf(name);
-
-      const emailIdx = idx('email');
-      const habitIdx = idx('habit name');
-      const typeIdx = idx('tracking type');
-      const unitIdx = idx('unit');
-      const colorIdx = idx('color');
-      const iconIdx = idx('icon');
-      const dateIdx = idx('date');
-      const valueIdx = idx('value');
-
-      if (emailIdx === -1 || habitIdx === -1 || dateIdx === -1 || valueIdx === -1) {
-        toast.error('CSV must have columns: Email, Habit Name, Date, Value');
+      const required = ['habit name', 'date', 'value'];
+      const missing = required.filter((r) => !headers.includes(r));
+      if (missing.length) {
+        toast.error(`CSV is missing required columns: ${missing.join(', ')}`);
+        setCsvFile(null);
         return;
       }
 
-      const parsedData = [];
+      // Build preview grouped by username
+      const usernameIdx = headers.indexOf('username');
+      const habitIdx = headers.indexOf('habit name');
+      const grouped = {};
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',');
-        if (cols.length < 4) continue;
-        const rawValue = cols[valueIdx]?.trim();
-        parsedData.push({
-          email: cols[emailIdx]?.trim(),
-          habitName: cols[habitIdx]?.trim(),
-          trackingType: typeIdx >= 0 ? cols[typeIdx]?.trim() : undefined,
-          unit: unitIdx >= 0 ? cols[unitIdx]?.trim() : undefined,
-          color: colorIdx >= 0 ? cols[colorIdx]?.trim() : undefined,
-          icon: iconIdx >= 0 ? cols[iconIdx]?.trim() : undefined,
-          date: cols[dateIdx]?.trim(),
-          value: rawValue && !isNaN(Number(rawValue)) ? Number(rawValue) : rawValue,
-        });
+        const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+        const uname = usernameIdx >= 0 ? (cols[usernameIdx] || '(unknown)') : '(unknown)';
+        const habit = cols[habitIdx] || '?';
+        if (!grouped[uname]) grouped[uname] = new Set();
+        grouped[uname].add(habit);
       }
-
-      restoreMutation.mutate(parsedData);
+      setCsvPreview({ text, totalRows: lines.length - 1, grouped });
     };
-    reader.readAsText(csvFile);
+    reader.readAsText(file);
   };
 
   return (
     <div className="max-w-4xl mx-auto p-4 space-y-6">
-      <div className="flex items-center gap-3">
-        <span className="text-2xl">🛡️</span>
-        <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>
-          Admin Dashboard
-        </h1>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">🛡️</span>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Admin Dashboard</h1>
+        </div>
+        <Button variant="outline" size="sm" onClick={handleRefresh}>
+          🔄 Refresh
+        </Button>
       </div>
 
       <Tabs defaultValue="overview">
         <TabsList className="mb-4">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
-          <TabsTrigger value="backups">Backup Restore</TabsTrigger>
+          <TabsTrigger value="backups">Backup & Restore</TabsTrigger>
           <TabsTrigger value="upload">CSV Upload</TabsTrigger>
         </TabsList>
 
-        {/* ── Overview ──────────────────────────────────────────────────── */}
+        {/* ── Overview ──────────────────────────────────────────────── */}
         <TabsContent value="overview">
           <div className="grid grid-cols-3 gap-4">
             {[
-              { label: 'Total Users', value: stats?.users ?? '—', icon: '👥' },
-              { label: 'Active Habits', value: stats?.habits ?? '—', icon: '📋' },
-              { label: 'Logged Entries', value: stats?.entries ?? '—', icon: '📊' },
-            ].map(({ label, value, icon }) => (
+              { label: 'End Users', value: stats?.users ?? '—', icon: '👥', note: 'Admin excluded' },
+              { label: 'Active Habits', value: stats?.habits ?? '—', icon: '📋', note: 'Across all users' },
+              { label: 'Logged Entries', value: stats?.entries ?? '—', icon: '📊', note: 'All time' },
+            ].map(({ label, value, icon, note }) => (
               <Card key={label} className="p-5 text-center">
                 <p className="text-2xl mb-1">{icon}</p>
                 {statsLoading ? (
@@ -161,169 +346,292 @@ export default function AdminDashboard() {
                 ) : (
                   <p className="text-3xl font-bold" style={{ color: 'var(--text-primary)' }}>{value}</p>
                 )}
-                <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+                <p className="text-sm mt-1 font-medium" style={{ color: 'var(--text-secondary)' }}>{label}</p>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)', opacity: 0.6 }}>{note}</p>
               </Card>
             ))}
           </div>
+
+          <Card className="mt-4 p-5">
+            <h3 className="font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>ℹ️ How backups work</h3>
+            <ul className="text-sm space-y-2" style={{ color: 'var(--text-secondary)' }}>
+              <li>• Backup cron runs every night at <strong>23:55 IST</strong></li>
+              <li>• One CSV file is generated <strong>per user</strong> covering all their habits and all entries</li>
+              <li>• Files are stored as binary data in MongoDB (Backup collection)</li>
+              <li>• To restore: go to <strong>Backup & Restore</strong>, select a user, pick a date, download or restore</li>
+              <li>• To import manually: go to <strong>CSV Upload</strong> and drop the backup file</li>
+              <li>• CSV format: <code className="px-1 rounded text-xs" style={{ background: 'var(--bg-secondary)' }}>Username, Habit Name, Tracking Type, Unit, Color, Icon, Goal Enabled, Goal Value, Date, Value</code></li>
+            </ul>
+          </Card>
         </TabsContent>
 
-        {/* ── Users ─────────────────────────────────────────────────────── */}
+        {/* ── Users ─────────────────────────────────────────────────── */}
         <TabsContent value="users">
           <Card className="p-4 overflow-x-auto">
+            <p className="text-xs mb-3" style={{ color: 'var(--text-secondary)' }}>
+              Click ▸ next to a username to see their habits.
+            </p>
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-border">
                   <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Username</th>
-                  <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Name</th>
                   <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Email</th>
-                  <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Role</th>
+                  <th className="py-2 pr-4 font-semibold" style={{ color: 'var(--text-secondary)' }}>Joined</th>
                   <th className="py-2 font-semibold" style={{ color: 'var(--text-secondary)' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {usersLoading
-                  ? Array.from({ length: 5 }).map((_, i) => (
+                  ? Array.from({ length: 4 }).map((_, i) => (
                       <tr key={i} className="border-b border-border/50">
-                        {Array.from({ length: 5 }).map((__, j) => (
-                          <td key={j} className="py-2 pr-4"><Skeleton className="h-4 w-24" /></td>
+                        {Array.from({ length: 4 }).map((__, j) => (
+                          <td key={j} className="py-3 pr-4"><Skeleton className="h-4 w-24" /></td>
                         ))}
                       </tr>
                     ))
-                  : users?.map((u) => (
-                  <tr key={u._id} className="border-b border-border/50">
-                    <td className="py-2 pr-4 font-medium" style={{ color: 'var(--text-primary)' }}>
-                      {u.username ? `@${u.username}` : '—'}
-                    </td>
-                    <td className="py-2 pr-4" style={{ color: 'var(--text-secondary)' }}>{u.name || '—'}</td>
-                    <td className="py-2 pr-4" style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
-                    <td className="py-2 pr-4">
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={u.isAdmin}
-                          disabled={user._id === u._id}
-                          onCheckedChange={(val) => roleMutation.mutate({ id: u._id, isAdmin: val })}
-                        />
-                        {u.isAdmin && <Badge variant="default">Admin</Badge>}
-                      </div>
-                    </td>
-                    <td className="py-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={user._id === u._id || deleteMutation.isPending}
-                        onClick={() => {
-                          const label = u.username ? `@${u.username}` : u.email;
-                          if (window.confirm(`Delete ${label} and all their data?`)) {
-                            deleteMutation.mutate(u._id);
-                          }
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                  : users.map((u) => (
+                      <UserRow key={u._id} u={u} currentUserId={user._id} onDelete={setDeleteTarget} />
+                    ))}
               </tbody>
             </table>
+            {!usersLoading && users.length === 0 && (
+              <p className="text-sm text-center py-8" style={{ color: 'var(--text-secondary)' }}>No end users yet.</p>
+            )}
           </Card>
         </TabsContent>
 
-        {/* ── Backup Restore ────────────────────────────────────────────── */}
+        {/* ── Backup & Restore ──────────────────────────────────────── */}
         <TabsContent value="backups">
-          <div className="space-y-4">
-            <Card className="p-5">
-              <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-                Restore from Stored Backup
+          <Card className="p-5 space-y-5">
+            <div>
+              <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                🗄️ Backup & Restore
               </h3>
-              <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
-                Daily backups are created at 23:55 IST. Select a date to restore all user data from
-                that snapshot. Existing entries for matching dates will be overwritten.
+              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                Select a user to see their backup snapshots. You can download the CSV file or
+                restore directly from a stored snapshot. Restoring <strong>overwrites</strong> existing
+                entries for matching dates.
               </p>
+            </div>
 
-              {backupsLoading ? (
-                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Loading backups…</p>
-              ) : backups.length === 0 ? (
-                <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  No backups found. Backups are created automatically each night.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {backups.map((b) => (
-                    <div
-                      key={b.date}
-                      className="flex items-center justify-between rounded-lg p-3"
-                      style={{
-                        background: 'var(--bg-secondary)',
-                        border: '1px solid var(--border-color)',
-                      }}
-                    >
-                      <div>
-                        <p className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>
-                          {b.date}
-                        </p>
-                        <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                          {b.habitCount} habit{b.habitCount !== 1 ? 's' : ''} · {b.userCount} user{b.userCount !== 1 ? 's' : ''}
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={backupRestoreMutation.isPending}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Restore all data from backup ${b.date}?\n\nThis will overwrite existing entries for matching dates.`
-                            )
-                          ) {
-                            backupRestoreMutation.mutate(b.date);
-                          }
-                        }}
-                      >
-                        {backupRestoreMutation.isPending ? 'Restoring…' : 'Restore'}
-                      </Button>
-                    </div>
-                  ))}
+            {/* Step 1 — pick user */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                Step 1 — Select a user
+              </p>
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-sm"
+                style={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <option value="">— Choose a user —</option>
+                {users.map((u) => (
+                  <option key={u._id} value={u._id}>
+                    {u.username ? `@${u.username}` : u.email}
+                    {u.name ? ` (${u.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Step 2 — pick backup date */}
+            {selectedUserId && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
+                    Step 2 — Select a backup snapshot
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={generateBackupMutation.isPending}
+                    onClick={() => generateBackupMutation.mutate(selectedUserId)}
+                  >
+                    {generateBackupMutation.isPending ? 'Generating…' : '⚡ Generate Now'}
+                  </Button>
                 </div>
-              )}
-            </Card>
-          </div>
+
+                {backupsLoading ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
+                  </div>
+                ) : userBackups.length === 0 ? (
+                  <div
+                    className="rounded-xl p-4 text-sm"
+                    style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
+                  >
+                    No backups found for {selectedUser?.username ? `@${selectedUser.username}` : selectedUser?.email}.
+                    Backups are created automatically each night at 23:55 IST once the user has logged at least one entry.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {userBackups.map((b) => {
+                      const label = selectedUser?.username ? `@${selectedUser.username}` : selectedUser?.email;
+                      return (
+                        <div
+                          key={b.date}
+                          className="flex items-center justify-between rounded-xl p-3 gap-3"
+                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
+                        >
+                          <div>
+                            <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{b.date}</p>
+                            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                              {b.habitCount} habit{b.habitCount !== 1 ? 's' : ''}
+                              {b.entryCount ? ` · ${b.entryCount} entries` : ''}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 shrink-0">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={isDownloading}
+                              onClick={() => handleDownload(selectedUserId, b.date, label)}
+                            >
+                              ⬇️ Download
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={restoreMutation.isPending}
+                              onClick={() => setRestoreTarget({ date: b.date, userId: selectedUserId, label })}
+                            >
+                              Restore
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={deleteBackupMutation.isPending}
+                              onClick={() => setDeleteBackupTarget({ date: b.date, userId: selectedUserId, label })}
+                            >
+                              🗑️
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
         </TabsContent>
 
-        {/* ── CSV Upload ────────────────────────────────────────────────── */}
+        {/* ── CSV Upload ────────────────────────────────────────────── */}
         <TabsContent value="upload">
-          <Card className="p-6 space-y-4">
-            <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-              Restore from CSV File
-            </h3>
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              Upload a CSV exported from backups or manually created. Required headers:{' '}
-              <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'var(--bg-secondary)' }}>
-                Email, Habit Name, Date, Value
-              </code>
-              {'. '}
-              Optional:{' '}
-              <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'var(--bg-secondary)' }}>
-                Tracking Type, Unit, Color, Icon
-              </code>
-              . Date format: <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'var(--bg-secondary)' }}>YYYY-MM-DD</code>.
-            </p>
-            <input
-              id="csv-upload"
-              type="file"
-              accept=".csv"
-              onChange={handleFileUpload}
-              className="block w-full rounded-md p-2 text-sm"
-              style={{ border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
-            />
-            <Button
-              onClick={handleProcessCsv}
-              disabled={!csvFile || restoreMutation.isPending}
+          <Card className="p-6 space-y-5">
+            <div>
+              <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+                📤 Import from CSV
+              </h3>
+              <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                Upload a CSV that was downloaded from the Backup & Restore tab, or any file that
+                matches the backup format. Existing entries for matching dates are overwritten.
+              </p>
+            </div>
+
+            {/* Format reference */}
+            <div
+              className="rounded-xl p-4 text-xs space-y-1.5"
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
             >
-              {restoreMutation.isPending ? 'Processing…' : 'Upload & Restore'}
+              <p className="font-semibold text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Expected CSV format</p>
+              <p><strong>Required columns:</strong> Habit Name, Date (YYYY-MM-DD), Value</p>
+              <p><strong>Optional columns:</strong> Username, Tracking Type, Unit, Color, Icon, Goal Enabled, Goal Value</p>
+              <p className="mt-2 font-mono break-all" style={{ color: 'var(--text-primary)' }}>
+                Username,Habit Name,Tracking Type,Unit,Color,Icon,Goal Enabled,Goal Value,Date,Value
+              </p>
+              <p className="font-mono">@alice,Running,quantity,km,#f97316,🏃,true,5,2026-06-01,4</p>
+              <p className="font-mono">@alice,Water,quantity,glasses,#06b6d4,💧,true,8,2026-06-01,7</p>
+              <p className="font-mono">@alice,Exercise,completion,,#22c55e,🏋️,false,,2026-06-01,yes</p>
+              <p className="mt-2">
+                💡 The easiest way to get a correctly formatted file is to download a backup from
+                the <strong>Backup & Restore</strong> tab and re-upload it here.
+              </p>
+            </div>
+
+            <CsvDropZone file={csvFile} onFile={handleCsvSelect} />
+
+            {/* Preview */}
+            {csvPreview && (
+              <div
+                className="rounded-xl p-4 space-y-2"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
+              >
+                <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  Preview — {csvPreview.totalRows} data rows
+                </p>
+                {Object.entries(csvPreview.grouped).map(([uname, habitSet]) => (
+                  <div key={uname} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{uname}</span>
+                    {' → '}
+                    {[...habitSet].join(', ')}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Button
+              onClick={() => csvRestoreMutation.mutate(csvPreview.text)}
+              disabled={!csvPreview || csvRestoreMutation.isPending}
+            >
+              {csvRestoreMutation.isPending ? 'Importing…' : '⬆️ Import & Restore'}
             </Button>
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Delete user confirmation */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete user?"
+        description={
+          deleteTarget
+            ? `This will permanently delete ${deleteTarget.username ? `@${deleteTarget.username}` : deleteTarget.email} and all their habits, entries, and backups. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => deleteMutation.mutate(deleteTarget._id)}
+        onClose={() => setDeleteTarget(null)}
+        isPending={deleteMutation.isPending}
+      />
+
+      {/* Restore confirmation */}
+      <ConfirmDialog
+        open={!!restoreTarget}
+        title="Restore backup?"
+        description={
+          restoreTarget
+            ? `Restore all habits for ${restoreTarget.label} from the ${restoreTarget.date} snapshot. Entries for matching dates will be overwritten.`
+            : ''
+        }
+        confirmLabel="Restore"
+        variant="default"
+        onConfirm={() => restoreMutation.mutate({ date: restoreTarget.date, userId: restoreTarget.userId })}
+        onClose={() => setRestoreTarget(null)}
+        isPending={restoreMutation.isPending}
+      />
+
+      {/* Delete backup confirmation */}
+      <ConfirmDialog
+        open={!!deleteBackupTarget}
+        title="Delete backup?"
+        description={
+          deleteBackupTarget
+            ? `Permanently delete the ${deleteBackupTarget.date} backup for ${deleteBackupTarget.label}. This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={() => deleteBackupMutation.mutate({ userId: deleteBackupTarget.userId, date: deleteBackupTarget.date })}
+        onClose={() => setDeleteBackupTarget(null)}
+        isPending={deleteBackupMutation.isPending}
+      />
     </div>
   );
 }

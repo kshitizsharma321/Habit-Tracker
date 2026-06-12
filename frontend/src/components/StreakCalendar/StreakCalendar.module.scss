@@ -7,7 +7,7 @@
   justify-content: center;
   font-size: clamp(11px, 1.4vw, 15px);
   font-weight: 600;
-  cursor: default;
+  cursor: pointer;
   border: 1px solid transparent;
   transition: filter 0.15s ease, box-shadow 0.15s ease;
   color: var(--text-secondary);

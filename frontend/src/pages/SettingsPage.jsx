@@ -13,6 +13,7 @@ import toast from 'react-hot-toast';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   return (
     <div className="max-w-lg mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -26,7 +27,7 @@ export default function SettingsPage() {
 
       <ProfileSection />
       <PasswordSection />
-      <NotificationSection />
+      {!user?.isAdmin && <NotificationSection />}
       <ThemeSection />
       <SignOutSection />
     </div>
@@ -44,7 +45,8 @@ function ProfileSection() {
 
   useEffect(() => {
     const trimmed = username.trim();
-    if (!trimmed || trimmed === user?.username) { setUsernameStatus(null); return; }
+    if (trimmed === (user?.username || '')) { setUsernameStatus(null); return; }
+    if (!trimmed) { setUsernameStatus('empty'); return; }
     if (trimmed.length < 3) { setUsernameStatus('min'); return; }
 
     setUsernameStatus('checking');
@@ -63,7 +65,11 @@ function ProfileSection() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (usernameStatus === 'taken' || usernameStatus === 'checking') return;
+    if (!username.trim()) {
+      toast.error('Username cannot be empty');
+      return;
+    }
+    if (usernameStatus === 'taken' || usernameStatus === 'checking' || usernameStatus === 'empty' || usernameStatus === 'min') return;
     setLoading(true);
     try {
       const updates = { name, email };
@@ -84,8 +90,16 @@ function ProfileSection() {
     if (usernameStatus === 'available') return { text: '✓ Available', color: 'text-green-500' };
     if (usernameStatus === 'taken') return { text: 'Already taken', color: 'text-destructive' };
     if (usernameStatus === 'min') return { text: 'At least 3 characters', color: 'text-muted-foreground' };
+    if (usernameStatus === 'empty') return { text: 'Username cannot be empty', color: 'text-destructive' };
     return { text: usernameStatus, color: 'text-destructive' };
   })();
+
+  const saveDisabled =
+    loading ||
+    usernameStatus === 'checking' ||
+    usernameStatus === 'taken' ||
+    usernameStatus === 'empty' ||
+    usernameStatus === 'min';
 
   return (
     <Card className="p-5">
@@ -110,7 +124,7 @@ function ProfileSection() {
           <Label>Email</Label>
           <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
-        <Button type="submit" disabled={loading || usernameStatus === 'checking' || usernameStatus === 'taken'} className="w-full">
+        <Button type="submit" disabled={saveDisabled} className="w-full">
           {loading ? 'Saving...' : 'Save Changes'}
         </Button>
       </form>
@@ -138,6 +152,8 @@ function PasswordSection() {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    if (!current) { setError('Current password is required'); return; }
+    if (!newPw) { setError('New password is required'); return; }
     if (newPw !== confirm) { setError('Passwords do not match'); return; }
     if (newPw.length < 6) { setError('Password must be at least 6 characters'); return; }
     setLoading(true);
@@ -156,9 +172,9 @@ function PasswordSection() {
     <Card className="p-5">
       <h2 className="font-semibold text-foreground mb-4">🔑 Password</h2>
       <form onSubmit={handleSubmit} className="space-y-3">
-        <Input type="password" required placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-        <Input type="password" required minLength={6} placeholder="New password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
-        <Input type="password" required placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <Input type="password" placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <Input type="password" placeholder="New password (min 6 chars)" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+        <Input type="password" placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={loading} className="w-full">{loading ? 'Changing...' : 'Change Password'}</Button>
       </form>
@@ -176,9 +192,8 @@ function NotificationSection() {
 }
 
 function ThemeSection() {
-  const { toggleTheme } = useTheme();
-  const currentTheme = document.documentElement.getAttribute('data-theme');
-  const isDark = currentTheme === 'dark';
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   return (
     <Card className="p-5">

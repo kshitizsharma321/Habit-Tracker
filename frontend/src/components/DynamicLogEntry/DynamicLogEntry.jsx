@@ -3,12 +3,10 @@ import { getDateKey, dateFormatters } from '../../utils/dates';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { DatePicker } from '../ui/date-picker';
-import styles from './DynamicLogEntry.module.scss';
 
-export default function DynamicLogEntry({ definition, existingEntry, onLog, isSaving, habitEntries }) {
+export default function DynamicLogEntry({ definition, existingEntry, onLog, isSaving, habitEntries, onAnimationTrigger }) {
   const [useManualDate, setUseManualDate] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [animClass, setAnimClass] = useState('');
   const [numericValue, setNumericValue] = useState('');
 
   const todayStr = getDateKey(new Date());
@@ -35,17 +33,13 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
     }
   }, [entryForDate, trackingType, alreadyLogged]);
 
-  const triggerAnimation = (value) => {
-    const cls = value === 'yes' ? styles.successAnimation : styles.failureAnimation;
-    setAnimClass(cls);
-    setTimeout(() => setAnimClass(''), 350);
-  };
-
   const handleLog = useCallback((value) => {
     if (isSaving) return;
     onLog({ date: dateKey, value });
-    if (trackingType === 'completion') triggerAnimation(value);
-  }, [isSaving, dateKey, onLog, trackingType]);
+    if (trackingType === 'completion' && onAnimationTrigger) {
+      onAnimationTrigger(value === 'yes' ? 'success' : 'failure');
+    }
+  }, [isSaving, dateKey, onLog, trackingType, onAnimationTrigger]);
 
   const renderInput = () => {
     switch (trackingType) {
@@ -121,7 +115,7 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
   };
 
   return (
-    <div className={`${animClass}`}>
+    <div>
       <div className="flex items-center gap-2 mb-2">
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
           <input

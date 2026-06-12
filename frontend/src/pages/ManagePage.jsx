@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
@@ -32,20 +32,21 @@ function DeleteDialog({ habit, isOpen, onClose, onConfirm, isDeleting }) {
 
 export default function ManagePage() {
   const { definitions, defsLoading, createHabit, isCreating, updateHabit, isUpdating, deleteHabit, isDeleting, changeType, isTypeChanging } = useOutletContext();
-  const [activeTab, setActiveTab] = useState('list');
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') === 'add' ? 'add' : 'list');
   const [editingId, setEditingId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [form, setForm] = useState({
     name: '', trackingType: 'completion',
     unit: '', goalEnabled: false, goalValue: 1,
-    color: '#22c55e', icon: '📌',
+    color: '#22c55e', icon: '⭐',
   });
 
   const editingDef = editingId ? definitions.find((d) => d._id === editingId) : null;
 
   const resetForm = () => {
-    setForm({ name: '', trackingType: 'completion', unit: '', goalEnabled: false, goalValue: 1, color: '#22c55e', icon: '📌' });
+    setForm({ name: '', trackingType: 'completion', unit: '', goalEnabled: false, goalValue: 1, color: '#22c55e', icon: '⭐' });
     setEditingId(null);
   };
 
@@ -54,7 +55,7 @@ export default function ManagePage() {
       name: def.name, trackingType: def.trackingType,
       unit: def.unit || '', goalEnabled: def.goal?.enabled || false,
       goalValue: def.goal?.value || 1,
-      color: def.color || '#22c55e', icon: def.icon || '📌',
+      color: def.color || '#22c55e', icon: def.icon || '⭐',
     });
     setEditingId(def._id);
     setActiveTab('add');
@@ -66,7 +67,7 @@ export default function ManagePage() {
       unit: tpl.unit || '',
       goalEnabled: tpl.type === 'quantity',
       goalValue: tpl.goal?.value || 1,
-      color: tpl.color || '#22c55e', icon: tpl.icon || '📌',
+      color: tpl.color || '#22c55e', icon: tpl.icon || '⭐',
     });
     setEditingId(null);
     setActiveTab('add');
@@ -78,7 +79,8 @@ export default function ManagePage() {
       unit: form.trackingType === 'quantity' ? form.unit : undefined,
     };
     if (form.trackingType === 'quantity') {
-      profile.goal = { enabled: true, value: form.goalValue };
+      const goalVal = Math.max(0, parseFloat(form.goalValue) || 0);
+      profile.goal = { enabled: true, value: goalVal };
     } else {
       profile.goal = { enabled: false, value: 1 };
     }
@@ -110,16 +112,21 @@ export default function ManagePage() {
     setDeleteTarget(null);
   };
 
+  const handleTabChange = (tab) => {
+    if (tab !== 'add' && editingId) resetForm();
+    setActiveTab(tab);
+  };
+
   const isSaving = isCreating || isUpdating || isTypeChanging;
 
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-bold text-foreground">Manage Habits</h1>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <TabsList className="w-full justify-start">
           <TabsTrigger value="list">Your Habits</TabsTrigger>
-          <TabsTrigger value="add">{editingId ? 'Edit' : '+ New'}</TabsTrigger>
+          <TabsTrigger value="add">{editingId ? 'Edit' : 'New'}</TabsTrigger>
           <TabsTrigger value="templates">Templates</TabsTrigger>
         </TabsList>
 

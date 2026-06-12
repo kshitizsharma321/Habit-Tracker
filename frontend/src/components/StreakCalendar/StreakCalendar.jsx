@@ -43,18 +43,33 @@ export default function StreakCalendar({ habitData, definition }) {
     return { grid };
   }, [habitData]);
 
+  const goalValue = definition?.trackingType === 'quantity' && definition?.goal?.enabled
+    ? definition.goal.value
+    : null;
+
   function getCellStyle(r, isToday) {
-    if (r === 'yes' || (typeof r === 'number' && r > 0)) return styles.yes;
-    if (r === 'no' || r === 0) return styles.no;
+    if (r === 'yes') return styles.yes;
+    if (r === 'no') return styles.no;
+    if (typeof r === 'number') {
+      if (goalValue != null) return r >= goalValue ? styles.yes : styles.neutral;
+      return r > 0 ? styles.yes : styles.no;
+    }
     if (r === null) return isToday ? styles.todayUnlogged : styles.neutral;
     return styles.neutral;
   }
 
   function getCellLabel(r, isToday) {
-    if (r === 'yes' || (typeof r === 'number' && r > 0)) {
-       return typeof r === 'number' ? `✅ ${r}${definition?.unit ? ' ' + definition.unit : ''}` : '✅ Logged';
+    if (r === 'yes') return '✅ Done';
+    if (r === 'no') return '❌ Skipped';
+    if (typeof r === 'number') {
+      const unit = definition?.unit ? ' ' + definition.unit : '';
+      if (goalValue != null) {
+        return r >= goalValue
+          ? `✅ ${r}${unit} — goal met!`
+          : `📊 ${r}${unit} — target: ${goalValue}`;
+      }
+      return r > 0 ? `✅ ${r}${unit}` : '❌ 0';
     }
-    if (r === 'no' || r === 0) return '❌ Missed';
     if (r === null) return isToday ? '⏳ Not logged yet' : 'No data';
     return 'No data';
   }

@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchDashboard } from '../api/habitDefinitionsApi';
@@ -10,6 +10,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
 import toast from 'react-hot-toast';
+import cardStyles from '../components/DynamicLogEntry/DynamicLogEntry.module.scss';
 
 function TodaySkeleton({ count = 3 }) {
   return (
@@ -38,6 +39,87 @@ function TodaySkeleton({ count = 3 }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// Each card owns its animation state — prevents animation from leaking across cards
+// when parent re-renders during optimistic updates.
+function HabitCard({ def, entry, allEntries, isSaving, onLog, onNavigate }) {
+  const [animationType, setAnimationType] = useState(null);
+  const timerRef = useRef(null);
+  const isLogged = entry?.value !== undefined && entry?.value !== null;
+
+  const handleAnimationTrigger = useCallback((type) => {
+    clearTimeout(timerRef.current);
+    setAnimationType(type);
+    timerRef.current = setTimeout(() => setAnimationType(null), 350);
+  }, []);
+
+  return (
+    <div
+      className={`rounded-xl overflow-hidden ${
+        animationType === 'success' ? cardStyles.successAnimation :
+        animationType === 'failure' ? cardStyles.failureAnimation : ''
+      }`}
+      style={{
+        background: isLogged
+          ? `color-mix(in srgb, ${def.color} 6%, var(--card-bg))`
+          : 'var(--card-bg)',
+        border: '1px solid var(--border-color)',
+        boxShadow: 'var(--shadow)',
+        transition: 'background 0.2s',
+      }}
+    >
+      <div className="h-1 w-full" style={{ background: def.color }} />
+      <div className="p-4">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-xl shrink-0"
+            style={{ background: `color-mix(in srgb, ${def.color} 15%, var(--bg-secondary))` }}
+          >
+            {def.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-sm leading-tight truncate" style={{ color: 'var(--text-primary)' }}>
+              {def.name}
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+              {def.trackingType === 'quantity' && def.unit ? def.unit : def.trackingType === 'completion' ? 'Done / Not Done' : ''}
+            </p>
+          </div>
+          {isLogged ? (
+            <Badge className="shrink-0 pointer-events-none text-xs text-white" style={{ background: def.color }}>
+              ✓ Logged
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="shrink-0 pointer-events-none text-xs">
+              Pending
+            </Badge>
+          )}
+        </div>
+
+        <div onClick={(e) => e.stopPropagation()} className="cursor-default">
+          <DynamicLogEntry
+            definition={def}
+            existingEntry={entry || {}}
+            habitEntries={allEntries}
+            onLog={onLog}
+            isSaving={isSaving}
+            onAnimationTrigger={handleAnimationTrigger}
+          />
+        </div>
+
+        <div className="mt-3 flex justify-end">
+          <button
+            onClick={onNavigate}
+            className="text-xs font-medium transition-colors hover:opacity-80"
+            style={{ color: def.color }}
+          >
+            View details →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -81,7 +163,6 @@ export default function TodayPage() {
       if (ctx?.previous) queryClient.setQueryData(['dashboard'], ctx.previous);
       toast.error(err.message || 'Failed to save');
     },
-    onSuccess: () => toast.success('Logged!'),
     // Mark the detail-page cache stale (it isn't mounted, so this won't trigger a refetch now).
     onSettled: (_d, _e, { habitId }) => {
       queryClient.invalidateQueries({ queryKey: ['habit-entries', habitId] });
@@ -108,8 +189,8 @@ export default function TodayPage() {
         <p className="text-5xl mb-4">🎯</p>
         <h2 className="text-xl font-bold text-foreground mb-2">Start tracking</h2>
         <p className="text-muted-foreground mb-6">Create your first habit to begin</p>
-        <Button onClick={() => navigate('/manage')} size="lg">
-          + Create Habit
+        <Button onClick={() => navigate('/manage?tab=add')} size="lg">
+          Create Habit
         </Button>
       </div>
     );
@@ -120,86 +201,22 @@ export default function TodayPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold text-foreground">{todayDate}</h1>
-        <Button variant="outline" size="sm" onClick={() => navigate('/manage')}>
-          + New Habit
+        <Button variant="outline" size="sm" onClick={() => navigate('/manage?tab=add')}>
+          New Habit
         </Button>
       </div>
 
-      {definitions.map((def) => {
-        const entry = todayEntries[def._id];
-        const isLogged = entry?.value !== undefined && entry?.value !== null;
-
-        return (
-          <div
-            key={def._id}
-            className="rounded-xl overflow-hidden transition-all"
-            style={{
-              background: isLogged
-                ? `color-mix(in srgb, ${def.color} 6%, var(--card-bg))`
-                : 'var(--card-bg)',
-              border: '1px solid var(--border-color)',
-              boxShadow: 'var(--shadow)',
-            }}
-          >
-            {/* Colored top accent bar */}
-            <div className="h-1 w-full" style={{ background: def.color }} />
-
-            <div className="p-4">
-              {/* Header row */}
-              <div className="flex items-center gap-2.5 mb-3">
-                <div
-                  className="w-9 h-9 rounded-lg flex items-center justify-center text-xl shrink-0"
-                  style={{ background: `color-mix(in srgb, ${def.color} 15%, var(--bg-secondary))` }}
-                >
-                  {def.icon}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm leading-tight truncate" style={{ color: 'var(--text-primary)' }}>
-                    {def.name}
-                  </p>
-                  <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                    {def.trackingType === 'quantity' && def.unit ? def.unit : def.trackingType === 'completion' ? 'Done / Not Done' : ''}
-                  </p>
-                </div>
-                {isLogged ? (
-                  <Badge
-                    className="shrink-0 pointer-events-none text-xs text-white"
-                    style={{ background: def.color }}
-                  >
-                    ✓ Logged
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="shrink-0 pointer-events-none text-xs">
-                    Pending
-                  </Badge>
-                )}
-              </div>
-
-              {/* Log entry */}
-              <div onClick={(e) => e.stopPropagation()} className="cursor-default">
-                <DynamicLogEntry
-                  definition={def}
-                  existingEntry={entry || {}}
-                  habitEntries={allEntries[def._id] || {}}
-                  onLog={({ date, value }) => handleLog({ date, value }, def._id)}
-                  isSaving={logMutation.isPending}
-                />
-              </div>
-
-              {/* View details */}
-              <div className="mt-3 flex justify-end">
-                <button
-                  onClick={() => navigate(`/habit/${def._id}`)}
-                  className="text-xs font-medium transition-colors hover:opacity-80"
-                  style={{ color: def.color }}
-                >
-                  View details →
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {definitions.map((def) => (
+        <HabitCard
+          key={def._id}
+          def={def}
+          entry={todayEntries[def._id]}
+          allEntries={allEntries[def._id] || {}}
+          isSaving={logMutation.isPending}
+          onLog={({ date, value }) => handleLog({ date, value }, def._id)}
+          onNavigate={() => navigate(`/habit/${def._id}`)}
+        />
+      ))}
     </div>
   );
 }

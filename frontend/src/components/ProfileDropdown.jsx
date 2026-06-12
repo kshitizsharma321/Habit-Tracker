@@ -18,7 +18,8 @@ export default function ProfileDropdown() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const displayName = user?.name || (user?.username ? `@${user.username}` : user?.email) || 'User';
+  const hasName = !!user?.name?.trim();
+  const displayName = hasName ? user.name : user?.username ? `@${user.username}` : user?.email || 'User';
   const avatarLetter = (user?.name || user?.username || user?.email || 'U').charAt(0).toUpperCase();
 
   return (
@@ -39,21 +40,21 @@ export default function ProfileDropdown() {
 
       {open && (
         <div className="absolute right-0 mt-2 w-48 bg-card-bg border border-border-col rounded-lg shadow-xl z-50 py-1">
+          {/* Identity block */}
           <div className="px-3 py-2 border-b border-border-col">
-            <p className="text-sm font-medium text-text-primary truncate">{displayName}</p>
-            {user?.username && (
-              <p className="text-xs text-text-secondary truncate">@{user.username}</p>
+            {hasName ? (
+              <>
+                <p className="text-sm font-medium text-text-primary truncate">{user.name}</p>
+                {user?.username && (
+                  <p className="text-xs text-text-secondary truncate">@{user.username}</p>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-text-secondary truncate">
+                {user?.username ? `@${user.username}` : user?.email || ''}
+              </p>
             )}
           </div>
-
-          {user?.isAdmin && (
-            <button
-              onClick={() => { setOpen(false); navigate('/admin'); }}
-              className="w-full text-left px-3 py-2 text-sm text-text-primary hover:bg-bg-secondary transition-colors flex items-center gap-2"
-            >
-              🛡️ Admin Panel
-            </button>
-          )}
 
           <button
             onClick={() => { setOpen(false); navigate('/settings'); }}

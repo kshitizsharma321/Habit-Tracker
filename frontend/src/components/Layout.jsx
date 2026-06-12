@@ -26,6 +26,8 @@ export default function Layout() {
     changeType, isTypeChanging,
   } = useHabitDefinitions();
 
+  const isAnyMutationPending = isCreating || isUpdating || isDeleting || isTypeChanging;
+
   // Admin users are redirected away from habit routes to /admin
   useEffect(() => {
     if (!user?.isAdmin) return;
@@ -84,6 +86,25 @@ export default function Layout() {
           }}
         />
       </main>
+
+      {/* Global loading overlay — prevents duplicate submissions */}
+      {isAnyMutationPending && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(2px)' }}
+        >
+          <div
+            className="flex flex-col items-center gap-3 rounded-2xl px-8 py-6"
+            style={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow)' }}
+          >
+            <div
+              className="w-8 h-8 rounded-full border-[3px] border-t-transparent animate-spin"
+              style={{ borderColor: `var(--accent-color)`, borderTopColor: 'transparent' }}
+            />
+            <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Saving…</p>
+          </div>
+        </div>
+      )}
 
       {/* Mobile bottom nav */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-card border-t z-40">

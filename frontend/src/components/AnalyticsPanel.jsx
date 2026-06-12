@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { parseStoredDate } from '../utils/dates';
 import { getSortedKeys } from '../utils/stats/shared';
 import { getAdvancedStats, getWeekData, getMonthData } from '../utils/stats/binary';
@@ -20,7 +20,7 @@ function trendIcon(dir) {
 
 function dayOfWeekRates(entries, trackingType) {
   const keys = getSortedKeys(entries);
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thur', 'Fri', 'Sat'];
   const counts = Array(7).fill(0);
   const hits = Array(7).fill(0);
 
@@ -64,7 +64,7 @@ function getBinaryTips(stats, dayRates) {
   }
 
   if (worst && worst.rate < 40) {
-    tips.push({ icon: '🗓️', text: `${worst.name}s are your hardest day (${worst.rate}% success). Plan something specific for that day.` });
+    tips.push({ icon: '🗓️', text: `${worst.name}'s are your hardest day (${worst.rate}% success). Plan something specific for that day.` });
   }
 
   return tips.slice(0, 3);
@@ -113,6 +113,7 @@ function MetricRow({ label, value, color }) {
 }
 
 function DayChart({ dayRates }) {
+  const [hoveredIdx, setHoveredIdx] = useState(null);
   const valid = dayRates.filter((d) => d.rate !== null);
   if (valid.length < 3) return null;
 
@@ -123,20 +124,40 @@ function DayChart({ dayRates }) {
   return (
     <div>
       <SectionTitle>Day of Week</SectionTitle>
-      <div className="flex items-end gap-1.5" style={{ height: '72px' }}>
-        {dayRates.map(({ name, rate }) => {
+      <div className="flex items-end gap-1.5" style={{ height: '80px' }}>
+        {dayRates.map(({ name, rate }, idx) => {
           const isBest = rate !== null && rate === best.rate;
           const isWorst = rate !== null && rate === worst.rate && worst.rate !== best.rate;
           const height = rate !== null ? Math.max(8, Math.round((rate / maxRate) * 64)) : 8;
           const color = isBest ? 'var(--success-color)' : isWorst ? 'var(--danger-color)' : 'var(--accent-color)';
           const opacity = rate === null ? 0.2 : isBest || isWorst ? 1 : 0.55;
+          const isHovered = hoveredIdx === idx;
 
           return (
-            <div key={name} className="flex flex-col items-center gap-1" style={{ flex: 1 }}>
+            <div
+              key={name}
+              className="flex flex-col items-center gap-1 relative"
+              style={{ flex: 1, cursor: 'default' }}
+              onMouseEnter={() => setHoveredIdx(idx)}
+              onMouseLeave={() => setHoveredIdx(null)}
+              onTouchStart={() => setHoveredIdx(isHovered ? null : idx)}
+            >
+              {isHovered && (
+                <div
+                  className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none z-10"
+                  style={{
+                    background: 'var(--card-bg)',
+                    border: '1px solid var(--border-color)',
+                    color: 'var(--text-primary)',
+                    boxShadow: 'var(--shadow)',
+                  }}
+                >
+                  {rate !== null ? `${rate}%` : 'No data'}
+                </div>
+              )}
               <div
                 className="rounded-t-sm w-full transition-all"
                 style={{ height: `${height}px`, background: color, opacity }}
-                title={rate !== null ? `${name}: ${rate}%` : `${name}: no data`}
               />
               <span className="text-[9px] font-semibold" style={{ color: isBest ? 'var(--success-color)' : isWorst ? 'var(--danger-color)' : 'var(--text-secondary)' }}>
                 {name}

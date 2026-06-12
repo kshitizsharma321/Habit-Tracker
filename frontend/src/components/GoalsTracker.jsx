@@ -33,7 +33,7 @@ export default function GoalsTracker({ entries, definition }) {
     <div className="bg-card border rounded-xl p-4 shadow-sm">
       <div className="flex items-center justify-between mb-2">
         <h5 className="font-semibold text-sm text-foreground">
-          🎯 Today&apos;s Goal
+          🎯 Today&apos;s target
         </h5>
         {progress.todayValue !== null && (
           <span className="text-sm font-bold text-foreground">{progress.percent}%</span>
@@ -52,9 +52,9 @@ export default function GoalsTracker({ entries, definition }) {
 
       <p className="text-xs text-muted-foreground mt-2">
         {progress.todayValue === null
-          ? `Not logged yet — goal: ${progress.target}${progress.unit ? ` ${progress.unit}` : ''}`
+          ? `Not logged yet — target: ${progress.target}${progress.unit ? ` ${progress.unit}` : ''}`
           : progress.isMet
-            ? `🎉 Goal met! ${progress.todayValue}/${progress.target}${progress.unit ? ` ${progress.unit}` : ''}`
+            ? `🎉 Target hit! ${progress.todayValue}/${progress.target}${progress.unit ? ` ${progress.unit}` : ''}`
             : `${progress.todayValue}/${progress.target}${progress.unit ? ` ${progress.unit}` : ''} — ${progress.target - progress.todayValue} ${progress.unit || 'more'} to go`}
       </p>
     </div>

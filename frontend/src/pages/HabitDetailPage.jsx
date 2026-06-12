@@ -5,7 +5,6 @@ import StreakCalendar from '../components/StreakCalendar/StreakCalendar';
 import StatsGrid from '../components/StatsGrid';
 import SmartInsights from '../components/SmartInsights';
 import AnalyticsPanel from '../components/AnalyticsPanel';
-import GoalsTracker from '../components/GoalsTracker';
 import History from '../components/History/History';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -180,34 +179,69 @@ export default function HabitDetailPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header row */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/')} aria-label="Back">
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <Button variant="ghost" size="icon" onClick={() => navigate('/')} aria-label="Back" className="shrink-0 mt-1">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 12H5m7-7-7 7 7 7" />
           </svg>
         </Button>
         <div
-          className="flex items-center gap-2 flex-1 rounded-xl px-3 py-2"
-          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
+          className="flex-1 rounded-2xl p-4"
+          style={{
+            background: `linear-gradient(135deg, color-mix(in srgb, ${definition.color} 12%, var(--card-bg)) 0%, var(--card-bg) 70%)`,
+            border: `1px solid color-mix(in srgb, ${definition.color} 30%, var(--border-color))`,
+          }}
         >
-          <span className="text-2xl">{definition.icon}</span>
-          <h1 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{definition.name}</h1>
-          <Badge variant="outline" className="ml-auto">
-            {TYPE_LABELS[definition.trackingType] || definition.trackingType}
-          </Badge>
-        </div>
-      </div>
+          <div className="flex items-center gap-3 mb-4">
+            <div
+              className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl shrink-0"
+              style={{ background: `color-mix(in srgb, ${definition.color} 20%, var(--bg-secondary))` }}
+            >
+              {definition.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h1 className="text-xl font-bold leading-tight truncate" style={{ color: 'var(--text-primary)' }}>
+                {definition.name}
+              </h1>
+              <Badge
+                variant="outline"
+                className="mt-1 text-xs"
+                style={{ borderColor: `color-mix(in srgb, ${definition.color} 60%, var(--border-color))`, color: definition.color }}
+              >
+                {TYPE_LABELS[definition.trackingType] || definition.trackingType}
+              </Badge>
+            </div>
+          </div>
 
-      {/* Action bar */}
-      <div className="flex gap-2 flex-wrap">
-        <Button size="sm" onClick={() => navigate('/')}>📝 Add Entry</Button>
-        <Button variant="outline" size="sm" onClick={() => downloadCSV(entries, `habit-${definition.name}`)}>
-          📊 Export CSV
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => navigate('/manage')}>
-          ✏️ Edit Habit
-        </Button>
+          {/* Grouped action buttons */}
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              className="text-white text-xs"
+              style={{ background: definition.color }}
+              onClick={() => navigate('/')}
+            >
+              📝 Log Entry
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={() => downloadCSV(entries, `habit-${definition.name}`)}
+            >
+              📊 Export
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={() => navigate('/manage')}
+            >
+              ✏️ Edit
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -226,10 +260,6 @@ export default function HabitDetailPage() {
           {streak && <StreakBanner streak={streak} definition={definition} />}
 
           <StatsGrid entries={entries} trackingType={definition.trackingType} />
-
-          {definition.goal?.enabled && (
-            <GoalsTracker entries={entries} definition={definition} />
-          )}
 
           <Card className="p-5">
             <h3 className="font-semibold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>

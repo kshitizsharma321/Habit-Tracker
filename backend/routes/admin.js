@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const { requireAuth } = require('../middleware/auth');
 const User = require('../models/User');
 const HabitDefinition = require('../models/HabitDefinition');
@@ -7,6 +8,13 @@ const Backup = require('../models/Backup');
 const Subscription = require('../models/Subscription');
 
 const router = express.Router();
+
+function escapeCsvCell(v) {
+  const s = String(v ?? '');
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s;
+}
 
 function requireAdmin(req, res, next) {
   if (!req.user || !req.user.isAdmin) {
@@ -18,13 +26,97 @@ function requireAdmin(req, res, next) {
 router.use(requireAuth);
 router.use(requireAdmin);
 
-// ── Stats overview ────────────────────────────────────────────────────────────
+// ── Shared CSV parser ─────────────────────────────────────────────────────────
+// Parses a backup CSV (or any compatible upload) and restores entries.
+// The targetUserId can be provided to scope the restore; otherwise it looks up
+// the username in each row.
+async function restoreFromCsvText(text, targetUserId = null) {
+  const lines = text.split('\n').filter((l) => l.trim());
+  if (lines.length < 2) return { restored: 0, errors: 0, message: 'File is empty or missing header row' };
+
+  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+  const idx = (name) => headers.indexOf(name);
+
+  const usernameIdx = idx('username');
+  const habitIdx = idx('habit name');
+  const typeIdx = idx('tracking type');
+  const unitIdx = idx('unit');
+  const colorIdx = idx('color');
+  const iconIdx = idx('icon');
+  const goalEnabledIdx = idx('goal enabled');
+  const goalValueIdx = idx('goal value');
+  const dateIdx = idx('date');
+  const valueIdx = idx('value');
+
+  if (habitIdx === -1 || dateIdx === -1 || valueIdx === -1) {
+    return { restored: 0, errors: 0, message: 'Missing required columns: Habit Name, Date, Value' };
+  }
+
+  const userCache = {};
+  let restored = 0;
+  let errors = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    try {
+      const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+      const habitName = cols[habitIdx];
+      const entryDate = cols[dateIdx];
+      const rawValue = cols[valueIdx];
+
+      if (!habitName || !entryDate || rawValue === undefined || rawValue === '') { errors++; continue; }
+
+      let userId = targetUserId;
+      if (!userId && usernameIdx >= 0) {
+        const uname = cols[usernameIdx].replace(/^@/, '').toLowerCase();
+        if (!userCache[uname]) {
+          const found = await User.findOne({ username: uname });
+          if (!found) { errors++; continue; }
+          userCache[uname] = found._id;
+        }
+        userId = userCache[uname];
+      }
+      if (!userId) { errors++; continue; }
+
+      const parsedValue = rawValue !== '' && !isNaN(Number(rawValue)) ? Number(rawValue) : rawValue;
+
+      let def = await HabitDefinition.findOne({ userId, name: habitName });
+      if (!def) {
+        def = await HabitDefinition.create({
+          userId,
+          name: habitName,
+          trackingType: (typeIdx >= 0 ? cols[typeIdx] : '') || 'completion',
+          unit: unitIdx >= 0 ? cols[unitIdx] || '' : '',
+          color: colorIdx >= 0 ? cols[colorIdx] || '#22c55e' : '#22c55e',
+          icon: iconIdx >= 0 ? cols[iconIdx] || '⭐' : '⭐',
+          goal: {
+            enabled: goalEnabledIdx >= 0 ? cols[goalEnabledIdx] === 'true' : false,
+            value: goalValueIdx >= 0 ? parseFloat(cols[goalValueIdx]) || 1 : 1,
+          },
+        });
+      }
+
+      await Habit.findOneAndUpdate(
+        { userId, habitId: def._id, date: entryDate },
+        { value: parsedValue },
+        { upsert: true }
+      );
+      restored++;
+    } catch {
+      errors++;
+    }
+  }
+
+  return { restored, errors };
+}
+
+// ── Stats overview (excludes admin accounts) ──────────────────────────────────
 router.get('/stats', async (req, res) => {
   try {
+    const adminIds = await User.find({ isAdmin: true }).distinct('_id');
     const [users, habits, entries] = await Promise.all([
-      User.countDocuments(),
-      HabitDefinition.countDocuments(),
-      Habit.countDocuments(),
+      User.countDocuments({ isAdmin: { $ne: true } }),
+      HabitDefinition.countDocuments({ userId: { $nin: adminIds } }),
+      Habit.countDocuments({ userId: { $nin: adminIds } }),
     ]);
     res.json({ users, habits, entries });
   } catch (err) {
@@ -32,13 +124,58 @@ router.get('/stats', async (req, res) => {
   }
 });
 
-// ── List all users ────────────────────────────────────────────────────────────
+// ── List all non-admin users ──────────────────────────────────────────────────
 router.get('/users', async (req, res) => {
   try {
-    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    const users = await User.find({ isAdmin: { $ne: true } })
+      .select('-password')
+      .sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch users', message: err.message });
+  }
+});
+
+// ── Get habits for a specific user ───────────────────────────────────────────
+router.get('/users/:id/habits', async (req, res) => {
+  try {
+    const habits = await HabitDefinition.find({ userId: req.params.id }).sort({ order: 1 });
+    res.json(habits);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch user habits', message: err.message });
+  }
+});
+
+// ── List backup snapshots for a user ─────────────────────────────────────────
+router.get('/users/:id/backups', async (req, res) => {
+  try {
+    const backups = await Backup.find({ userId: req.params.id })
+      .select('date habitCount entryCount createdAt')
+      .sort({ date: -1 })
+      .limit(30);
+    res.json(backups);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch user backups', message: err.message });
+  }
+});
+
+// ── Download a backup CSV file ────────────────────────────────────────────────
+router.get('/users/:id/backups/:date/download', async (req, res) => {
+  try {
+    const backup = await Backup.findOne({ userId: req.params.id, date: req.params.date });
+    if (!backup) return res.status(404).json({ error: 'Backup not found' });
+
+    const user = await User.findById(req.params.id).select('username email');
+    const username = user?.username || user?.email || 'user';
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="backup-@${username}-${req.params.date}.csv"`
+    );
+    res.send(backup.fileData);
+  } catch (err) {
+    res.status(500).json({ error: 'Download failed', message: err.message });
   }
 });
 
@@ -49,11 +186,16 @@ router.delete('/users/:id', async (req, res) => {
     if (String(id) === String(req.user._id)) {
       return res.status(400).json({ error: 'Cannot delete yourself' });
     }
+    const target = await User.findById(id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.isAdmin) return res.status(400).json({ error: 'Cannot delete another admin account' });
+
     await Promise.all([
       User.findByIdAndDelete(id),
       HabitDefinition.deleteMany({ userId: id }),
       Habit.deleteMany({ userId: id }),
       Subscription.deleteMany({ userId: id }),
+      Backup.deleteMany({ userId: id }),
     ]);
     res.json({ success: true });
   } catch (err) {
@@ -77,135 +219,108 @@ router.put('/users/:id/role', async (req, res) => {
   }
 });
 
-// ── Restore entries from uploaded CSV data ────────────────────────────────────
-// Accepts: [{ email, habitName, trackingType?, unit?, color?, icon?, date, value }]
-router.post('/restore-data', async (req, res) => {
-  try {
-    const { data } = req.body;
-    if (!Array.isArray(data) || data.length === 0) {
-      return res.status(400).json({ error: 'No data provided' });
-    }
-
-    let restored = 0;
-    let errors = 0;
-
-    for (const row of data) {
-      try {
-        const { email, habitName, trackingType, unit, color, icon, date, value } = row;
-        if (!email || !habitName || !date || value === undefined) { errors++; continue; }
-
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
-        if (!user) { errors++; continue; }
-
-        // Find or create habit definition by (userId, name)
-        let def = await HabitDefinition.findOne({ userId: user._id, name: habitName });
-        if (!def) {
-          def = await HabitDefinition.create({
-            userId: user._id,
-            name: habitName,
-            trackingType: trackingType || 'completion',
-            unit: unit || '',
-            color: color || '#22c55e',
-            icon: icon || '📌',
-          });
-        }
-
-        await Habit.findOneAndUpdate(
-          { userId: user._id, habitId: def._id, date },
-          { value },
-          { upsert: true }
-        );
-        restored++;
-      } catch {
-        errors++;
-      }
-    }
-
-    res.json({ restored, errors });
-  } catch (err) {
-    res.status(500).json({ error: 'Restore failed', message: err.message });
-  }
-});
-
-// ── List available backup dates ───────────────────────────────────────────────
-router.get('/backups', async (req, res) => {
-  try {
-    const backups = await Backup.aggregate([
-      {
-        $group: {
-          _id: '$date',
-          habitCount: { $sum: 1 },
-          userIds: { $addToSet: '$userId' },
-        },
-      },
-      {
-        $project: {
-          date: '$_id',
-          habitCount: 1,
-          userCount: { $size: '$userIds' },
-          _id: 0,
-        },
-      },
-      { $sort: { date: -1 } },
-      { $limit: 30 },
-    ]);
-    res.json(backups);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to list backups', message: err.message });
-  }
-});
-
-// ── Restore from stored MongoDB backup for a given date ───────────────────────
-// Uses userId + habitId already stored in Backup records — no CSV format parsing needed.
+// ── Restore from stored MongoDB backup ───────────────────────────────────────
+// Reads the fileData Buffer, parses CSV, and upserts entries for that user.
 router.post('/restore-from-backup', async (req, res) => {
   try {
-    const { date } = req.body;
-    if (!date) return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
-
-    const backupRecords = await Backup.find({ date });
-    if (backupRecords.length === 0) {
-      return res.status(404).json({ error: `No backups found for ${date}` });
+    const { date, userId } = req.body;
+    if (!date || !userId) {
+      return res.status(400).json({ error: 'date and userId are required' });
     }
 
-    let restored = 0;
-    let errors = 0;
+    const backup = await Backup.findOne({ userId, date });
+    if (!backup) {
+      return res.status(404).json({ error: `No backup found for ${date}` });
+    }
 
-    for (const backup of backupRecords) {
-      try {
-        const lines = backup.csvContent.split('\n').filter((l) => l.trim());
-        if (lines.length < 2) continue;
+    const text = backup.fileData.toString('utf8');
+    const result = await restoreFromCsvText(text, userId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Restore from backup failed', message: err.message });
+  }
+});
 
-        // Support both old format (Date,Value,...) and enriched format (Email,Habit Name,...,Date,Value)
-        const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-        const dateIdx = headers.indexOf('date');
-        const valueIdx = headers.indexOf('value');
-        if (dateIdx === -1 || valueIdx === -1) continue;
+// ── Generate a fresh backup for a specific user right now ────────────────────
+router.post('/users/:id/generate-backup', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(',');
-          const entryDate = cols[dateIdx]?.trim();
-          const rawValue = cols[valueIdx]?.trim();
-          if (!entryDate || rawValue === undefined) { errors++; continue; }
+    const today = new Date();
+    const todayIST = new Date(today.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    const dateKey = `${todayIST.getFullYear()}-${String(todayIST.getMonth() + 1).padStart(2, '0')}-${String(todayIST.getDate()).padStart(2, '0')}`;
 
-          const parsedValue = (rawValue !== '' && !isNaN(Number(rawValue)))
-            ? Number(rawValue)
-            : rawValue;
+    const definitions = await HabitDefinition.find({ userId: user._id }).sort({ order: 1 });
+    if (definitions.length === 0) {
+      return res.json({ message: 'No habits found — nothing to back up', date: dateKey, habitCount: 0, entryCount: 0 });
+    }
 
-          await Habit.findOneAndUpdate(
-            { userId: backup.userId, habitId: backup.habitId, date: entryDate },
-            { value: parsedValue },
-            { upsert: true }
-          );
-          restored++;
-        }
-      } catch {
-        errors++;
+    const username = user.username || user.email || String(user._id);
+    const rows = [[
+      'Username', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon',
+      'Goal Enabled', 'Goal Value', 'Date', 'Value',
+    ]];
+    let entryCount = 0;
+
+    for (const def of definitions) {
+      const entries = await Habit.find({ habitId: def._id, userId: user._id }).sort({ date: 1 });
+      for (const e of entries) {
+        rows.push([
+          escapeCsvCell(`@${username}`),
+          escapeCsvCell(def.name),
+          escapeCsvCell(def.trackingType),
+          escapeCsvCell(def.unit || ''),
+          escapeCsvCell(def.color || ''),
+          escapeCsvCell(def.icon || ''),
+          escapeCsvCell(def.goal?.enabled ? 'true' : 'false'),
+          escapeCsvCell(def.goal?.enabled ? def.goal.value : ''),
+          e.date,
+          escapeCsvCell(String(e.value)),
+        ]);
+        entryCount++;
       }
     }
 
-    res.json({ restored, errors, backupsProcessed: backupRecords.length });
+    const csv = rows.map((r) => r.join(',')).join('\n');
+    const fileData = Buffer.from(csv, 'utf8');
+
+    await Backup.findOneAndUpdate(
+      { userId: user._id, date: dateKey },
+      { fileData, habitCount: definitions.length, entryCount },
+      { upsert: true, new: true }
+    );
+
+    res.json({ message: 'Backup generated', date: dateKey, habitCount: definitions.length, entryCount });
   } catch (err) {
-    res.status(500).json({ error: 'Restore from backup failed', message: err.message });
+    res.status(500).json({ error: 'Failed to generate backup', message: err.message });
+  }
+});
+
+// ── Delete a specific backup snapshot ────────────────────────────────────────
+router.delete('/users/:id/backups/:date', async (req, res) => {
+  try {
+    const result = await Backup.findOneAndDelete({ userId: req.params.id, date: req.params.date });
+    if (!result) return res.status(404).json({ error: 'Backup not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete backup', message: err.message });
+  }
+});
+
+// ── Restore from uploaded CSV (same format as backup) ────────────────────────
+// Accepts: multipart or JSON-wrapped raw CSV text.
+// Expects the same CSV format the backup cron generates.
+router.post('/restore-data', async (req, res) => {
+  try {
+    const { csvText } = req.body;
+    if (!csvText || typeof csvText !== 'string') {
+      return res.status(400).json({ error: 'csvText (string) is required in the request body' });
+    }
+    const result = await restoreFromCsvText(csvText);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Restore failed', message: err.message });
   }
 });
 
