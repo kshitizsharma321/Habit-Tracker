@@ -68,7 +68,7 @@ export default function App() {
 
               <Route element={<AuthGate><OnboardingGate /></AuthGate>}>
                 <Route index element={<TodayPage />} />
-                <Route path="habit/:habitId" element={<HabitDetailPage />} />
+                <Route path="detail" element={<HabitDetailPage />} />
                 <Route path="manage" element={<ManagePage />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="admin" element={<AdminDashboard />} />

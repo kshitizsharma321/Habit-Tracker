@@ -21,7 +21,10 @@ import { Skeleton } from '../components/ui/skeleton';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '../components/ui/dialog';
-import toast from 'react-hot-toast';
+import {
+  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+} from '../components/ui/select';
+import { notify } from '../lib/toast';
 
 // ── Generic confirm modal ─────────────────────────────────────────────────────
 function ConfirmDialog({ open, title, description, confirmLabel = 'Confirm', variant = 'destructive', onConfirm, onClose, isPending }) {
@@ -51,7 +54,7 @@ function CsvDropZone({ file, onFile }) {
   const handle = (f) => {
     if (!f) return;
     if (!f.name.toLowerCase().endsWith('.csv')) {
-      toast.error('Please upload a .csv file');
+      notify.error('Invalid file', 'Please upload a .csv file.');
       return;
     }
     onFile(f);
@@ -177,19 +180,26 @@ export default function AdminDashboard() {
   const [csvFile, setCsvFile] = useState(null);
   const [csvPreview, setCsvPreview] = useState(null); // { text, rows, grouped }
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Only admins should ever hit these endpoints. The route guard below redirects
+  // non-admins, but it runs after these hooks — so gate the fetches on the role too.
+  const isAdmin = !!user?.isAdmin;
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['admin-stats'],
     queryFn: fetchAdminStats,
+    enabled: isAdmin,
   });
   const { data: users = [], isLoading: usersLoading } = useQuery({
     queryKey: ['admin-users'],
     queryFn: fetchAdminUsers,
+    enabled: isAdmin,
   });
   const { data: userBackups = [], isLoading: backupsLoading } = useQuery({
     queryKey: ['admin-user-backups', selectedUserId],
     queryFn: () => fetchAdminUserBackups(selectedUserId),
-    enabled: !!selectedUserId,
+    enabled: isAdmin && !!selectedUserId,
   });
 
   const deleteMutation = useMutation({
@@ -197,80 +207,88 @@ export default function AdminDashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      toast.success('User deleted');
+      notify.success('User deleted', 'Their habits, entries, and backups were removed.');
       setDeleteTarget(null);
     },
-    onError: (err) => { toast.error(err.message); setDeleteTarget(null); },
+    onError: (err) => { notify.error("Couldn't delete user", err.message); setDeleteTarget(null); },
   });
 
   const restoreMutation = useMutation({
     mutationFn: restoreFromBackup,
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      toast.success(`Restored ${res.restored} entries${res.errors ? ` (${res.errors} errors)` : ''}`);
+      notify.success('Backup restored', `${res.restored} entries restored${res.errors ? ` · ${res.errors} skipped` : ''}.`);
       setRestoreTarget(null);
     },
-    onError: (err) => { toast.error(err.message); setRestoreTarget(null); },
+    onError: (err) => { notify.error('Restore failed', err.message); setRestoreTarget(null); },
   });
 
   const csvRestoreMutation = useMutation({
     mutationFn: restoreAdminData,
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      toast.success(`Imported ${res.restored} entries${res.errors ? ` (${res.errors} errors)` : ''}`);
+      notify.success('Import complete', `${res.restored} entries imported${res.errors ? ` · ${res.errors} skipped` : ''}.`);
       setCsvFile(null);
       setCsvPreview(null);
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err) => notify.error('Import failed', err.message),
   });
 
   const generateBackupMutation = useMutation({
     mutationFn: generateUserBackup,
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
-      toast.success(`Backup generated for ${res.date} — ${res.entryCount} entries`);
+      notify.success('Backup generated', `${res.date} · ${res.entryCount} ${res.entryCount === 1 ? 'entry' : 'entries'} saved.`);
     },
-    onError: (err) => toast.error(err.message || 'Failed to generate backup'),
+    onError: (err) => notify.error("Couldn't generate backup", err.message || 'Please try again.'),
   });
 
   const deleteBackupMutation = useMutation({
     mutationFn: ({ userId, date }) => deleteUserBackup(userId, date),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
-      toast.success('Backup deleted');
+      notify.success('Backup deleted', 'The snapshot was removed.');
       setDeleteBackupTarget(null);
     },
-    onError: (err) => { toast.error(err.message || 'Failed to delete backup'); setDeleteBackupTarget(null); },
+    onError: (err) => { notify.error("Couldn't delete backup", err.message || 'Please try again.'); setDeleteBackupTarget(null); },
   });
 
-  const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-users'] });
-    if (selectedUserId) {
-      queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['admin-stats'] }),
+        queryClient.refetchQueries({ queryKey: ['admin-users'] }),
+        selectedUserId
+          ? queryClient.refetchQueries({ queryKey: ['admin-user-backups', selectedUserId] })
+          : Promise.resolve(),
+      ]);
+      notify.success('Data refreshed', 'Showing the latest numbers.');
+    } catch (err) {
+      notify.error('Refresh failed', err.message || 'Please try again.');
+    } finally {
+      setIsRefreshing(false);
     }
-    toast.success('Data refreshed');
   };
 
   if (!user?.isAdmin) return <Navigate to="/" replace />;
 
   const selectedUser = users.find((u) => u._id === selectedUserId);
 
-  // Download a backup file from MongoDB
-  const handleDownload = async (userId, date, username) => {
+  // Download a backup via Supabase signed URL
+  const handleDownload = async (userId, date) => {
     setIsDownloading(true);
     try {
-      const res = await downloadUserBackup(userId, date);
-      if (!res.ok) throw new Error('Download failed');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const { signedUrl } = await downloadUserBackup(userId, date);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup-${username}-${date}.csv`;
+      a.href = signedUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
-      toast.error(err.message || 'Download failed');
+      notify.error('Download failed', err.message || 'Please try again.');
     } finally {
       setIsDownloading(false);
     }
@@ -284,13 +302,13 @@ export default function AdminDashboard() {
     reader.onload = (e) => {
       const text = e.target.result;
       const lines = text.split('\n').filter((l) => l.trim());
-      if (lines.length < 2) { toast.error('CSV is empty or missing a header row'); return; }
+      if (lines.length < 2) { notify.error('Empty file', 'This CSV has no header row or data.'); return; }
 
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
       const required = ['habit name', 'date', 'value'];
       const missing = required.filter((r) => !headers.includes(r));
       if (missing.length) {
-        toast.error(`CSV is missing required columns: ${missing.join(', ')}`);
+        notify.error('Missing columns', `Required: ${missing.join(', ')}.`);
         setCsvFile(null);
         return;
       }
@@ -318,8 +336,15 @@ export default function AdminDashboard() {
           <span className="text-2xl">🛡️</span>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Admin Dashboard</h1>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRefresh}>
-          🔄 Refresh
+        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isRefreshing}>
+          {isRefreshing ? (
+            <>
+              <span className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin mr-1.5" />
+              Refreshing…
+            </>
+          ) : (
+            <>🔄 Refresh</>
+          )}
         </Button>
       </div>
 
@@ -357,7 +382,8 @@ export default function AdminDashboard() {
             <ul className="text-sm space-y-2" style={{ color: 'var(--text-secondary)' }}>
               <li>• Backup cron runs every night at <strong>23:55 IST</strong></li>
               <li>• One CSV file is generated <strong>per user</strong> covering all their habits and all entries</li>
-              <li>• Files are stored as binary data in MongoDB (Backup collection)</li>
+              <li>• CSV files are stored in <strong>Supabase Storage</strong> (private bucket); MongoDB keeps only the file reference</li>
+              <li>• Downloads use a short-lived signed link, so backups stay private</li>
               <li>• To restore: go to <strong>Backup & Restore</strong>, select a user, pick a date, download or restore</li>
               <li>• To import manually: go to <strong>CSV Upload</strong> and drop the backup file</li>
               <li>• CSV format: <code className="px-1 rounded text-xs" style={{ background: 'var(--bg-secondary)' }}>Username, Habit Name, Tracking Type, Unit, Color, Icon, Goal Enabled, Goal Value, Date, Value</code></li>
@@ -419,24 +445,19 @@ export default function AdminDashboard() {
               <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                 Step 1 — Select a user
               </p>
-              <select
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm"
-                style={{
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border-color)',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                <option value="">— Choose a user —</option>
-                {users.map((u) => (
-                  <option key={u._id} value={u._id}>
-                    {u.username ? `@${u.username}` : u.email}
-                    {u.name ? ` (${u.name})` : ''}
-                  </option>
-                ))}
-              </select>
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="— Choose a user —" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u._id} value={u._id}>
+                      {u.username ? `@${u.username}` : u.email}
+                      {u.name ? ` (${u.name})` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Step 2 — pick backup date */}
@@ -490,7 +511,7 @@ export default function AdminDashboard() {
                               size="sm"
                               variant="outline"
                               disabled={isDownloading}
-                              onClick={() => handleDownload(selectedUserId, b.date, label)}
+                              onClick={() => handleDownload(selectedUserId, b.date)}
                             >
                               ⬇️ Download
                             </Button>

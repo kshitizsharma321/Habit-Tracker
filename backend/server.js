@@ -13,6 +13,7 @@ const authRoutes = require('./routes/auth');
 const habitDefRoutes = require('./routes/habitDefinitions');
 const adminRoutes = require('./routes/admin');
 const { requireAuth } = require('./middleware/auth');
+const { supabase, BACKUP_BUCKET } = require('./lib/supabase');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,6 +53,11 @@ async function ensureIndexes() {
     // Drop the old compound index and remove legacy documents that had a habitId field.
     try { await Backup.collection.dropIndex('userId_1_habitId_1_date_1'); } catch {}
     try { await Backup.collection.deleteMany({ habitId: { $exists: true } }); } catch {}
+
+    // Migrate old fileData (Buffer) backups to new filePath (Supabase) schema.
+    // These documents cannot be restored without re-uploading to Supabase — just delete them.
+    // The cron or admin "Generate Now" will recreate them in the new format.
+    try { await Backup.collection.deleteMany({ fileData: { $exists: true } }); } catch {}
 
     // Normalize any isAdmin values stored as strings (e.g. "true") to proper booleans.
     // This can happen if the field was set manually via Atlas or a shell command.
@@ -221,6 +227,10 @@ function escapeCsvCell(v) {
 }
 
 cron.schedule('55 18 * * *', async () => {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn('⚠️  Backup cron skipped: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set');
+    return;
+  }
   try {
     const today = new Date();
     const todayIST = new Date(today.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
@@ -244,7 +254,7 @@ cron.schedule('55 18 * * *', async () => {
         const entries = await Habit.find({ habitId: def._id, userId: user._id }).sort({ date: 1 });
         for (const e of entries) {
           rows.push([
-            escapeCsvCell(`@${username}`),
+            escapeCsvCell(username),
             escapeCsvCell(def.name),
             escapeCsvCell(def.trackingType),
             escapeCsvCell(def.unit || ''),
@@ -262,18 +272,30 @@ cron.schedule('55 18 * * *', async () => {
       if (entryCount === 0) continue;
 
       const csv = rows.map((r) => r.join(',')).join('\n');
-      const fileData = Buffer.from(csv, 'utf8');
+      const filePath = `${user._id}/${dateKey}.csv`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(BACKUP_BUCKET)
+        .upload(filePath, Buffer.from(csv, 'utf8'), {
+          contentType: 'text/csv; charset=utf-8',
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error(`Backup upload failed for ${username}:`, uploadError.message);
+        continue;
+      }
 
       await Backup.findOneAndUpdate(
         { userId: user._id, date: dateKey },
-        { fileData, habitCount: definitions.length, entryCount },
+        { filePath, habitCount: definitions.length, entryCount },
         { upsert: true, new: true }
       );
       written++;
     }
 
     if (written > 0) {
-      console.log(`📦 Daily backup: ${written} user file(s) written for ${dateKey}`);
+      console.log(`📦 Daily backup: ${written} user file(s) uploaded to Supabase for ${dateKey}`);
     }
   } catch (err) {
     console.error('Backup cron error:', err.message);

@@ -9,7 +9,7 @@ import DynamicLogEntry from '../components/DynamicLogEntry/DynamicLogEntry';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Skeleton } from '../components/ui/skeleton';
-import toast from 'react-hot-toast';
+import { notify } from '../lib/toast';
 import cardStyles from '../components/DynamicLogEntry/DynamicLogEntry.module.scss';
 
 function TodaySkeleton({ count = 3 }) {
@@ -161,7 +161,7 @@ export default function TodayPage() {
     },
     onError: (err, _vars, ctx) => {
       if (ctx?.previous) queryClient.setQueryData(['dashboard'], ctx.previous);
-      toast.error(err.message || 'Failed to save');
+      notify.error("Couldn't save", err.message || 'Check your connection and try again.');
     },
     // Mark the detail-page cache stale (it isn't mounted, so this won't trigger a refetch now).
     onSettled: (_d, _e, { habitId }) => {
@@ -214,7 +214,10 @@ export default function TodayPage() {
           allEntries={allEntries[def._id] || {}}
           isSaving={logMutation.isPending}
           onLog={({ date, value }) => handleLog({ date, value }, def._id)}
-          onNavigate={() => navigate(`/habit/${def._id}`)}
+          onNavigate={() => {
+            sessionStorage.setItem('ht_active_habit', def._id);
+            navigate('/detail');
+          }}
         />
       ))}
     </div>

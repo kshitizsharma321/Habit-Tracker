@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNotifications } from '../../hooks/useNotifications';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/select';
 import styles from './NotificationSettings.module.scss';
 
 function to12Hour(time24) {
@@ -87,47 +88,53 @@ export default function NotificationSettings() {
           <span className="text-sm text-text-secondary">Remind me at</span>
           <div className={styles.timeSelects}>
             {/* Hour */}
-            <select
-              className={styles.timeSelect}
-              value={parsed.hour}
-              onChange={(e) => {
-                const t = buildTime24(e.target.value, parsed.minute, parsed.period);
+            <Select
+              value={String(parsed.hour)}
+              onValueChange={(v) => {
+                const t = buildTime24(v, parsed.minute, parsed.period);
                 setLocalTime(t);
                 updateTime(t);
               }}
             >
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
-                <option key={h} value={h}>{String(h).padStart(2, '0')}</option>
-              ))}
-            </select>
+              <SelectTrigger className="w-[72px] h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
+                  <SelectItem key={h} value={String(h)}>{String(h).padStart(2, '0')}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span className={styles.timeSep}>:</span>
             {/* Minute */}
-            <select
-              className={styles.timeSelect}
-              value={parsed.minute}
-              onChange={(e) => {
-                const t = buildTime24(parsed.hour, e.target.value, parsed.period);
+            <Select
+              value={String(parsed.minute)}
+              onValueChange={(v) => {
+                const t = buildTime24(parsed.hour, v, parsed.period);
                 setLocalTime(t);
                 updateTime(t);
               }}
             >
-              {[0, 15, 30, 45].map((m) => (
-                <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
-              ))}
-            </select>
+              <SelectTrigger className="w-[72px] h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[0, 15, 30, 45].map((m) => (
+                  <SelectItem key={m} value={String(m)}>{String(m).padStart(2, '0')}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {/* AM/PM */}
-            <select
-              className={styles.timeSelect}
+            <Select
               value={parsed.period}
-              onChange={(e) => {
-                const t = buildTime24(parsed.hour, parsed.minute, e.target.value);
+              onValueChange={(v) => {
+                const t = buildTime24(parsed.hour, parsed.minute, v);
                 setLocalTime(t);
                 updateTime(t);
               }}
             >
-              <option value="AM">AM</option>
-              <option value="PM">PM</option>
-            </select>
+              <SelectTrigger className="w-[76px] h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="AM">AM</SelectItem>
+                <SelectItem value="PM">PM</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <button
             onClick={testPush}

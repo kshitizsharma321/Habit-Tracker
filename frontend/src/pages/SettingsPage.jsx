@@ -9,7 +9,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Switch } from '../components/ui/switch';
 import { Card } from '../components/ui/card';
-import toast from 'react-hot-toast';
+import { notify } from '../lib/toast';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -66,7 +66,7 @@ function ProfileSection() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!username.trim()) {
-      toast.error('Username cannot be empty');
+      notify.error('Username required', 'Please enter a username before saving.');
       return;
     }
     if (usernameStatus === 'taken' || usernameStatus === 'checking' || usernameStatus === 'empty' || usernameStatus === 'min') return;
@@ -75,10 +75,10 @@ function ProfileSection() {
       const updates = { name, email };
       if (username.trim() && username.trim() !== user?.username) updates.username = username.trim();
       await updateUser(updates);
-      toast.success('Profile updated');
+      notify.success('Profile updated', 'Your changes have been saved.');
       setUsernameStatus(null);
     } catch (err) {
-      toast.error(err.message);
+      notify.error("Couldn't update profile", err.message);
     } finally {
       setLoading(false);
     }
@@ -159,7 +159,7 @@ function PasswordSection() {
     setLoading(true);
     try {
       await changePassword({ currentPassword: current, newPassword: newPw });
-      toast.success('Password changed');
+      notify.success('Password changed', 'Use your new password next time you sign in.');
       setCurrent(''); setNewPw(''); setConfirm('');
     } catch (err) {
       setError(err.message);

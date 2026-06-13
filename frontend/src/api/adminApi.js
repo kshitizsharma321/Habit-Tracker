@@ -19,9 +19,9 @@ export const fetchAdminUserHabits = (userId) =>
 export const fetchAdminUserBackups = (userId) =>
   apiFetchJSON(`/admin/users/${userId}/backups`);
 
-// Returns a raw Response so the caller can stream the blob for download.
+// Returns { signedUrl } — a short-lived Supabase signed URL for direct browser download.
 export const downloadUserBackup = (userId, date) =>
-  apiFetch(`/admin/users/${userId}/backups/${date}/download`);
+  apiFetchJSON(`/admin/users/${userId}/backups/${date}/download`);
 
 // Restore from a backup stored in MongoDB (identified by userId + date).
 export const restoreFromBackup = ({ date, userId }) =>

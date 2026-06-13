@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
-import toast from 'react-hot-toast';
+import { Input } from './ui/input';
+import { notify } from '../lib/toast';
 
 export default function LoginPage({ onSwitch }) {
   const { login, loginWithGoogle } = useAuth();
@@ -19,7 +20,7 @@ export default function LoginPage({ onSwitch }) {
     } catch (err) {
       const msg = err.message || 'Login failed';
       setError(msg);
-      toast.error(msg);
+      notify.error("Couldn't sign in", msg);
     } finally {
       setLoading(false);
     }
@@ -32,7 +33,7 @@ export default function LoginPage({ onSwitch }) {
     } catch (err) {
       const msg = err.message || 'Google sign-in failed';
       setError(msg);
-      toast.error(msg);
+      notify.error('Google sign-in failed', msg);
     }
   }
 
@@ -50,24 +51,24 @@ export default function LoginPage({ onSwitch }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Username</label>
-            <input
+            <Input
               type="text"
               required
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-col bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-ht-accent"
+              className="h-10"
               placeholder="your_username"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Password</label>
-            <input
+            <Input
               type="password"
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-col bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-ht-accent"
+              className="h-10"
               placeholder="••••••••"
             />
           </div>

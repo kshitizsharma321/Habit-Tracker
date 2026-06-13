@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams, useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate, useOutletContext, Navigate } from 'react-router-dom';
 import { useHabitEntries } from '../hooks/useHabitEntries';
 import StreakCalendar from '../components/StreakCalendar/StreakCalendar';
 import StatsGrid from '../components/StatsGrid';
@@ -143,10 +143,13 @@ function DetailSkeleton() {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function HabitDetailPage() {
-  const { habitId } = useParams();
   const navigate = useNavigate();
-  const { definitions } = useOutletContext();
+  const { definitions, defsLoading } = useOutletContext();
   const [activeTab, setActiveTab] = useState('overview');
+
+  // The active habit id is kept in sessionStorage (set when navigating from Today),
+  // so the URL stays a clean generic /detail. Survives refresh; a cold visit has none.
+  const habitId = sessionStorage.getItem('ht_active_habit');
 
   const definition = useMemo(
     () => definitions.find((d) => d._id === habitId),
@@ -164,6 +167,12 @@ export default function HabitDetailPage() {
     }
     return null;
   }, [entries, definition]);
+
+  // Cold visit (e.g. opening /detail directly) with no selected habit → go home.
+  if (!habitId) return <Navigate to="/" replace />;
+
+  // Habit list still loading — don't flash "not found".
+  if (defsLoading) return <DetailSkeleton />;
 
   if (!definition) {
     return (

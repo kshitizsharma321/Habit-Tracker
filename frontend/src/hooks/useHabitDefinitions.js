@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
+import { notify } from '../lib/toast';
 import {
   fetchDefinitions,
   createDefinition,
@@ -27,18 +27,18 @@ export function useHabitDefinitions() {
     mutationFn: createDefinition,
     onSuccess: (data) => {
       queryClient.setQueryData(['habit-definitions'], (old = []) => [...old, data]);
-      toast.success(`"${data.name}" added! Start logging.`);
+      notify.success('Habit created', `"${data.name}" is ready — start logging today.`);
     },
-    onError: (err) => toast.error(err.message || 'Failed to create habit'),
+    onError: (err) => notify.error("Couldn't create habit", err.message || 'Please try again.'),
   });
 
   const bulkCreateMutation = useMutation({
     mutationFn: bulkCreateDefinitions,
     onSuccess: (data) => {
       queryClient.setQueryData(['habit-definitions'], (old = []) => [...old, ...data.habits]);
-      toast.success(`${data.count} habits created!`);
+      notify.success('Habits added', `${data.count} ${data.count === 1 ? 'habit' : 'habits'} created — you're all set.`);
     },
-    onError: (err) => toast.error(err.message || 'Failed to create habits'),
+    onError: (err) => notify.error("Couldn't create habits", err.message || 'Please try again.'),
   });
 
   const updateMutation = useMutation({
@@ -47,9 +47,9 @@ export function useHabitDefinitions() {
       queryClient.setQueryData(['habit-definitions'], (old = []) =>
         old.map((d) => (d._id === updated._id ? updated : d))
       );
-      toast.success(`"${updated.name}" saved`);
+      notify.success('Changes saved', `"${updated.name}" has been updated.`);
     },
-    onError: (err) => toast.error(err.message || 'Failed to update habit'),
+    onError: (err) => notify.error("Couldn't save changes", err.message || 'Please try again.'),
   });
 
   const deleteMutation = useMutation({
@@ -65,16 +65,16 @@ export function useHabitDefinitions() {
     },
     onError: (err, _id, context) => {
       queryClient.setQueryData(['habit-definitions'], context.previous);
-      toast.error(err.message || 'Failed to delete habit');
+      notify.error("Couldn't delete habit", err.message || 'Please try again.');
     },
     onSuccess: (data, _id, context) => {
       queryClient.invalidateQueries({ queryKey: ['habit-definitions'] });
       const name = context?.habitName ?? 'Habit';
       const count = data?.deletedEntries ?? 0;
-      const msg = count > 0
-        ? `"${name}" deleted — ${count} ${count === 1 ? 'entry' : 'entries'} cleared`
-        : `"${name}" deleted`;
-      toast.success(msg);
+      const detail = count > 0
+        ? `${count} ${count === 1 ? 'entry' : 'entries'} cleared too.`
+        : 'It’s been removed.';
+      notify.success(`"${name}" deleted`, detail);
     },
   });
 
@@ -90,7 +90,7 @@ export function useHabitDefinitions() {
     },
     onError: (_err, _vars, context) => {
       queryClient.setQueryData(['habit-definitions'], context.previous);
-      toast.error('Failed to reorder');
+      notify.error("Couldn't reorder", 'Your habit order was restored.');
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['habit-definitions'] });
@@ -105,9 +105,9 @@ export function useHabitDefinitions() {
       );
       queryClient.invalidateQueries({ queryKey: ['habit-entries', result.definition._id] });
       const n = result.changed;
-      toast.success(`Type changed — ${n} ${n === 1 ? 'entry' : 'entries'} converted`);
+      notify.success('Tracking type changed', `${n} ${n === 1 ? 'entry was' : 'entries were'} converted.`);
     },
-    onError: (err) => toast.error(err.message || 'Failed to change type'),
+    onError: (err) => notify.error("Couldn't change type", err.message || 'Please try again.'),
   });
 
   return {

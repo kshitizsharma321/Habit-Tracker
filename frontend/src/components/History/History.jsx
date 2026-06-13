@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { groupByMonth } from '../../utils/stats';
 import { dateFormatters, parseStoredDate } from '../../utils/dates';
+import { Switch } from '../ui/switch';
 import styles from './History.module.scss';
 
 function entryBorderClass(val) {
@@ -75,15 +76,14 @@ export default function History({ habitData, rawData }) {
         <h3 className="text-xl font-semibold text-text-primary">
           Your Habit History
         </h3>
-        <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer select-none">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2 text-sm text-text-secondary select-none">
+          <Switch
+            id="hide-autofilled"
             checked={hideAutoFilled}
-            onChange={(e) => setHideAutoFilled(e.target.checked)}
-            className="w-4 h-4 accent-[var(--accent-color)] cursor-pointer"
+            onCheckedChange={setHideAutoFilled}
           />
-          Show only logged entries
-        </label>
+          <label htmlFor="hide-autofilled" className="cursor-pointer">Show only logged entries</label>
+        </div>
       </div>
 
       {sortedYears.length === 0 ? (

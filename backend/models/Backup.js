@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 
 // One backup document per user per day.
-// fileData holds the complete CSV as a binary Buffer so the admin can download
-// the exact file and re-upload it to restore data.
+// The actual CSV is stored in Supabase Storage; filePath holds the object path
+// inside the 'habit-backups' bucket: "{userId}/{date}.csv"
 const backupSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -13,8 +13,8 @@ const backupSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  fileData: {
-    type: Buffer,
+  filePath: {
+    type: String,
     required: true,
   },
   habitCount: {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
+import { Input } from './ui/input';
 import { checkUsernameAvailability } from '../api/authApi';
 
 export default function RegisterPage({ onSwitch }) {
@@ -82,22 +83,22 @@ export default function RegisterPage({ onSwitch }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Name (optional)</label>
-            <input
+            <Input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-col bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-ht-accent"
+              className="h-10"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Username</label>
-            <input
+            <Input
               type="text"
               required
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
-              className="w-full px-3 py-2 rounded-lg border border-border-col bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-ht-accent"
+              className="h-10"
               placeholder="your_username"
             />
             {usernameHint && (
@@ -106,22 +107,22 @@ export default function RegisterPage({ onSwitch }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Email (optional)</label>
-            <input
+            <Input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-col bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-ht-accent"
+              className="h-10"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Password</label>
-            <input
+            <Input
               type="password"
               required
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-col bg-bg-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-ht-accent"
+              className="h-10"
               placeholder="At least 6 characters"
             />
           </div>

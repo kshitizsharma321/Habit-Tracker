@@ -26,5 +26,8 @@ const habitSchema = new mongoose.Schema({
 });
 
 habitSchema.index({ userId: 1, habitId: 1, date: 1 }, { unique: true });
+// Serves the dashboard's date-range scan (Habit.find({ userId, date: { $gte } })),
+// which can't use the compound index above because it skips habitId.
+habitSchema.index({ userId: 1, date: 1 });
 
 module.exports = mongoose.model('Habit', habitSchema);

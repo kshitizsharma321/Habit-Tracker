@@ -6,6 +6,7 @@ const HabitDefinition = require('../models/HabitDefinition');
 const Habit = require('../models/Habit');
 const Backup = require('../models/Backup');
 const Subscription = require('../models/Subscription');
+const { supabase, BACKUP_BUCKET } = require('../lib/supabase');
 
 const router = express.Router();
 
@@ -159,21 +160,23 @@ router.get('/users/:id/backups', async (req, res) => {
   }
 });
 
-// ── Download a backup CSV file ────────────────────────────────────────────────
+// ── Download a backup — returns a short-lived Supabase signed URL ─────────────
 router.get('/users/:id/backups/:date/download', async (req, res) => {
   try {
     const backup = await Backup.findOne({ userId: req.params.id, date: req.params.date });
     if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
     const user = await User.findById(req.params.id).select('username email');
-    const username = user?.username || user?.email || 'user';
+    const rawName = user?.username || user?.email || 'user';
+    const safeName = rawName.replace(/[^a-zA-Z0-9-_]+/g, '_').replace(/^_+|_+$/g, '');
+    const filename = `habit-backup_${safeName}_${req.params.date}.csv`;
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="backup-@${username}-${req.params.date}.csv"`
-    );
-    res.send(backup.fileData);
+    const { data, error } = await supabase.storage
+      .from(BACKUP_BUCKET)
+      .createSignedUrl(backup.filePath, 3600, { download: filename });
+
+    if (error) throw error;
+    res.json({ signedUrl: data.signedUrl });
   } catch (err) {
     res.status(500).json({ error: 'Download failed', message: err.message });
   }
@@ -190,6 +193,10 @@ router.delete('/users/:id', async (req, res) => {
     if (!target) return res.status(404).json({ error: 'User not found' });
     if (target.isAdmin) return res.status(400).json({ error: 'Cannot delete another admin account' });
 
+    // Collect backup file paths before deleting MongoDB records
+    const backups = await Backup.find({ userId: id }).select('filePath');
+    const filePaths = backups.map((b) => b.filePath).filter(Boolean);
+
     await Promise.all([
       User.findByIdAndDelete(id),
       HabitDefinition.deleteMany({ userId: id }),
@@ -197,6 +204,11 @@ router.delete('/users/:id', async (req, res) => {
       Subscription.deleteMany({ userId: id }),
       Backup.deleteMany({ userId: id }),
     ]);
+
+    // Best-effort: remove backup files from Supabase Storage
+    if (filePaths.length > 0) {
+      await supabase.storage.from(BACKUP_BUCKET).remove(filePaths).catch(() => {});
+    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete user', message: err.message });
@@ -219,8 +231,7 @@ router.put('/users/:id/role', async (req, res) => {
   }
 });
 
-// ── Restore from stored MongoDB backup ───────────────────────────────────────
-// Reads the fileData Buffer, parses CSV, and upserts entries for that user.
+// ── Restore from stored backup (fetches CSV from Supabase) ───────────────────
 router.post('/restore-from-backup', async (req, res) => {
   try {
     const { date, userId } = req.body;
@@ -233,7 +244,15 @@ router.post('/restore-from-backup', async (req, res) => {
       return res.status(404).json({ error: `No backup found for ${date}` });
     }
 
-    const text = backup.fileData.toString('utf8');
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from(BACKUP_BUCKET)
+      .download(backup.filePath);
+
+    if (downloadError) throw downloadError;
+
+    const arrayBuffer = await blob.arrayBuffer();
+    const text = Buffer.from(arrayBuffer).toString('utf8');
+
     const result = await restoreFromCsvText(text, userId);
     res.json(result);
   } catch (err) {
@@ -267,7 +286,7 @@ router.post('/users/:id/generate-backup', async (req, res) => {
       const entries = await Habit.find({ habitId: def._id, userId: user._id }).sort({ date: 1 });
       for (const e of entries) {
         rows.push([
-          escapeCsvCell(`@${username}`),
+          escapeCsvCell(username),
           escapeCsvCell(def.name),
           escapeCsvCell(def.trackingType),
           escapeCsvCell(def.unit || ''),
@@ -283,11 +302,20 @@ router.post('/users/:id/generate-backup', async (req, res) => {
     }
 
     const csv = rows.map((r) => r.join(',')).join('\n');
-    const fileData = Buffer.from(csv, 'utf8');
+    const filePath = `${user._id}/${dateKey}.csv`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(BACKUP_BUCKET)
+      .upload(filePath, Buffer.from(csv, 'utf8'), {
+        contentType: 'text/csv; charset=utf-8',
+        upsert: true,
+      });
+
+    if (uploadError) throw uploadError;
 
     await Backup.findOneAndUpdate(
       { userId: user._id, date: dateKey },
-      { fileData, habitCount: definitions.length, entryCount },
+      { filePath, habitCount: definitions.length, entryCount },
       { upsert: true, new: true }
     );
 
@@ -300,8 +328,10 @@ router.post('/users/:id/generate-backup', async (req, res) => {
 // ── Delete a specific backup snapshot ────────────────────────────────────────
 router.delete('/users/:id/backups/:date', async (req, res) => {
   try {
-    const result = await Backup.findOneAndDelete({ userId: req.params.id, date: req.params.date });
-    if (!result) return res.status(404).json({ error: 'Backup not found' });
+    const backup = await Backup.findOneAndDelete({ userId: req.params.id, date: req.params.date });
+    if (!backup) return res.status(404).json({ error: 'Backup not found' });
+    // Best-effort: delete from Supabase (don't fail the request if this errors)
+    await supabase.storage.from(BACKUP_BUCKET).remove([backup.filePath]).catch(() => {});
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete backup', message: err.message });

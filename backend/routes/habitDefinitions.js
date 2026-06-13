@@ -117,43 +117,32 @@ router.post('/bulk', requireAuth, async (req, res) => {
 
 router.get('/dashboard', requireAuth, async (req, res) => {
   try {
-    const definitions = await HabitDefinition.find({ userId: req.user._id }).sort({ order: 1 });
+    // The habit list itself is loaded separately via GET /habit-definitions (cached app-wide),
+    // so the dashboard only needs entries. One query for the last 60 days covers both today's
+    // entries and the backdate lookup window — no definitions round-trip, no defIds filter.
     const today = new Date();
     const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    const defIds = definitions.map((d) => d._id);
 
-    const habits = await Habit.find({
-      userId: req.user._id,
-      habitId: { $in: defIds },
-      date: todayKey,
-    });
-
-    const todayEntries = {};
-    habits.forEach((h) => {
-      todayEntries[h.habitId.toString()] = {
-        value: h.value,
-      };
-    });
-
-    // Recent entries (last 60 days) for backdate lookup
     const sixtyDaysAgo = new Date();
     sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
     const fromKey = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
 
     const recentEntries = await Habit.find({
       userId: req.user._id,
-      habitId: { $in: defIds },
       date: { $gte: fromKey },
     });
 
+    const todayEntries = {};
     const allEntries = {};
     recentEntries.forEach((h) => {
-      const hid = h.habitId.toString();
+      const hid = h.habitId?.toString();
+      if (!hid) return; // skip orphaned entries with no habit reference
       if (!allEntries[hid]) allEntries[hid] = {};
       allEntries[hid][h.date] = { value: h.value };
+      if (h.date === todayKey) todayEntries[hid] = { value: h.value };
     });
 
-    res.json({ definitions, todayEntries, allEntries });
+    res.json({ todayEntries, allEntries });
   } catch (error) {
     res.status(500).json({ error: 'Failed to load dashboard', message: error.message });
   }

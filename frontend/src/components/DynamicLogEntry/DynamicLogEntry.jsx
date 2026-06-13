@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getDateKey, dateFormatters } from '../../utils/dates';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { Switch } from '../ui/switch';
 import { DatePicker } from '../ui/date-picker';
 
 export default function DynamicLogEntry({ definition, existingEntry, onLog, isSaving, habitEntries, onAnimationTrigger }) {
@@ -117,15 +118,14 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
+          <Switch
+            id="manual-date"
             checked={useManualDate}
-            onChange={(e) => setUseManualDate(e.target.checked)}
-            className="w-3.5 h-3.5 accent-[var(--accent-color)] cursor-pointer"
+            onCheckedChange={setUseManualDate}
           />
-          Log for a different date
-        </label>
+          <label htmlFor="manual-date" className="cursor-pointer">Log for a different date</label>
+        </div>
         {useManualDate && (
           <DatePicker
             value={getDateKey(selectedDate)}

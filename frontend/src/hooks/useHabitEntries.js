@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import toast from 'react-hot-toast';
 import { fetchEntries, saveEntry } from '../api/entriesApi';
 import { fillMissingDays } from '../utils/stats/shared';
+import { notify } from '../lib/toast';
 
 export function useHabitEntries(habitId, trackingType) {
   const queryClient = useQueryClient();
@@ -39,11 +39,12 @@ export function useHabitEntries(habitId, trackingType) {
     },
     onError: (err, _vars, context) => {
       queryClient.setQueryData(queryKey, context.previous);
-      toast.error(err.message || 'Failed to save. Check your connection.');
+      notify.error("Couldn't save", err.message || 'Check your connection and try again.');
     },
     onSuccess: (_, { value }) => {
       const isPositive = value === 'yes' || (trackingType === 'quantity' && Number(value) > 0);
-      toast.success(isPositive ? '✅ Logged!' : '❌ Missed');
+      if (isPositive) notify.success('Logged!', 'Nice — keep the streak going. 🔥');
+      else notify.info('Marked as not done', "No worries — tomorrow's a fresh start.");
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey });

@@ -31,8 +31,8 @@ export default function Layout() {
   // Admin users are redirected away from habit routes to /admin
   useEffect(() => {
     if (!user?.isAdmin) return;
-    const habitRoutes = ['/', '/manage'];
-    const isHabitRoute = habitRoutes.includes(location.pathname) || location.pathname.startsWith('/habit/');
+    const habitRoutes = ['/', '/manage', '/detail'];
+    const isHabitRoute = habitRoutes.includes(location.pathname);
     if (isHabitRoute) navigate('/admin', { replace: true });
   }, [user, location.pathname, navigate]);
 
