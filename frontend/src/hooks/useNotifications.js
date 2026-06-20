@@ -13,6 +13,24 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
 }
 
+// Unsubscribe push + clear local reminder state. Safe to call on logout / account deletion.
+// Uses getRegistration() (not .ready, which never resolves when no service worker exists).
+export async function teardownPushNotifications() {
+  localStorage.removeItem(LS_ENABLED_KEY);
+  localStorage.removeItem(LS_TIME_KEY);
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      // Best-effort server cleanup; fire-and-forget so logout isn't blocked on the network.
+      apiFetch('/subscriptions', { method: 'DELETE', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+      await sub.unsubscribe();
+    }
+  } catch { /* ignore */ }
+}
+
 export function useNotifications() {
   const isSupported =
     typeof window !== 'undefined' &&

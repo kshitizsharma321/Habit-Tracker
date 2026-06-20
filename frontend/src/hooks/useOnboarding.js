@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { saveOnboarding } from '../api/onboardingApi';
+import { completeOnboarding } from '../api/onboardingApi';
 
 export function useOnboarding() {
   const { user, updateUser } = useAuth();
@@ -8,7 +8,7 @@ export function useOnboarding() {
   const isOnboarded = user?.onboardingComplete === true;
 
   const skip = useCallback(async () => {
-    await saveOnboarding({ onboardingComplete: true });
+    await completeOnboarding({ onboardingComplete: true });
     await updateUser({ onboardingComplete: true });
   }, [updateUser]);
 

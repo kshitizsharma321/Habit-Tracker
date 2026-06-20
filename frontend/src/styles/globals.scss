@@ -107,6 +107,16 @@ body {
   }
 }
 
+// ─── Placeholders read as faded hints, not real values ────────────────────────
+input::placeholder,
+textarea::placeholder {
+  opacity: 0.55;
+}
+[data-theme='dark'] input::placeholder,
+[data-theme='dark'] textarea::placeholder {
+  opacity: 0.5 !important;
+}
+
 // ─── Dark mode scrollbar ──────────────────────────────────────────────────────
 [data-theme='dark'] {
   scrollbar-color: var(--border-color) var(--bg-primary);

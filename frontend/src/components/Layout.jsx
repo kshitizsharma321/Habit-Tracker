@@ -6,8 +6,9 @@ import ProfileDropdown from './ProfileDropdown';
 import LoadingScreen from './LoadingScreen';
 
 const HABIT_NAV = [
-  { to: '/', label: 'Today', icon: '🏠' },
-  { to: '/manage', label: 'Manage', icon: '📋' },
+  { to: '/', label: 'Track', icon: '✅' },
+  { to: '/dashboard', label: 'Dashboard', icon: '📊' },
+  { to: '/manage', label: 'Habits', icon: '📋' },
 ];
 
 const ADMIN_NAV = [
@@ -23,15 +24,15 @@ export default function Layout() {
     definitions, isLoading: defsLoading,
     createHabit, isCreating, bulkCreateHabits,
     updateHabit, isUpdating, deleteHabit, isDeleting,
-    changeType, isTypeChanging,
+    reorderHabits, isReordering,
   } = useHabitDefinitions();
 
-  const isAnyMutationPending = isCreating || isUpdating || isDeleting || isTypeChanging;
+  const isAnyMutationPending = isCreating || isUpdating || isDeleting;
 
   // Admin users are redirected away from habit routes to /admin
   useEffect(() => {
     if (!user?.isAdmin) return;
-    const habitRoutes = ['/', '/manage', '/detail'];
+    const habitRoutes = ['/', '/dashboard', '/manage', '/detail'];
     const isHabitRoute = habitRoutes.includes(location.pathname);
     if (isHabitRoute) navigate('/admin', { replace: true });
   }, [user, location.pathname, navigate]);
@@ -82,7 +83,7 @@ export default function Layout() {
             definitions, defsLoading,
             createHabit, isCreating, bulkCreateHabits,
             updateHabit, isUpdating, deleteHabit, isDeleting,
-            changeType, isTypeChanging,
+            reorderHabits, isReordering,
           }}
         />
       </main>

@@ -41,10 +41,3 @@ export async function reorderDefinitions(orderedIds) {
 export async function fetchDashboard() {
   return apiFetchJSON('/habit-definitions/dashboard');
 }
-
-export async function applyTypeChange(id, { newType, unit }) {
-  return apiFetchJSON(`/habit-definitions/${id}/change-type`, {
-    method: 'POST',
-    body: JSON.stringify({ newType, unit }),
-  });
-}

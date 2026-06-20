@@ -31,7 +31,7 @@ router.use(requireAdmin);
 // Parses a backup CSV (or any compatible upload) and restores entries.
 // The targetUserId can be provided to scope the restore; otherwise it looks up
 // the username in each row.
-async function restoreFromCsvText(text, targetUserId = null) {
+async function restoreFromCsvText(text, { targetUserId = null, newUserPassword = null } = {}) {
   const lines = text.split('\n').filter((l) => l.trim());
   if (lines.length < 2) return { restored: 0, errors: 0, message: 'File is empty or missing header row' };
 
@@ -46,6 +46,7 @@ async function restoreFromCsvText(text, targetUserId = null) {
   const iconIdx = idx('icon');
   const goalEnabledIdx = idx('goal enabled');
   const goalValueIdx = idx('goal value');
+  const goalDirectionIdx = idx('goal direction');
   const dateIdx = idx('date');
   const valueIdx = idx('value');
 
@@ -54,6 +55,7 @@ async function restoreFromCsvText(text, targetUserId = null) {
   }
 
   const userCache = {};
+  const recreatedUsers = new Set();
   let restored = 0;
   let errors = 0;
 
@@ -70,7 +72,12 @@ async function restoreFromCsvText(text, targetUserId = null) {
       if (!userId && usernameIdx >= 0) {
         const uname = cols[usernameIdx].replace(/^@/, '').toLowerCase();
         if (!userCache[uname]) {
-          const found = await User.findOne({ username: uname });
+          let found = await User.findOne({ username: uname });
+          if (!found && newUserPassword) {
+            // Recreate a deleted account so its backup can be fully restored.
+            found = await User.create({ username: uname, password: newUserPassword, onboardingComplete: true });
+            recreatedUsers.add(uname);
+          }
           if (!found) { errors++; continue; }
           userCache[uname] = found._id;
         }
@@ -92,6 +99,7 @@ async function restoreFromCsvText(text, targetUserId = null) {
           goal: {
             enabled: goalEnabledIdx >= 0 ? cols[goalEnabledIdx] === 'true' : false,
             value: goalValueIdx >= 0 ? parseFloat(cols[goalValueIdx]) || 1 : 1,
+            direction: goalDirectionIdx >= 0 && cols[goalDirectionIdx] === 'at_most' ? 'at_most' : 'at_least',
           },
         });
       }
@@ -107,7 +115,7 @@ async function restoreFromCsvText(text, targetUserId = null) {
     }
   }
 
-  return { restored, errors };
+  return { restored, errors, recreated: recreatedUsers.size };
 }
 
 // ── Stats overview (excludes admin accounts) ──────────────────────────────────
@@ -147,29 +155,44 @@ router.get('/users/:id/habits', async (req, res) => {
   }
 });
 
-// ── List backup snapshots for a user ─────────────────────────────────────────
-router.get('/users/:id/backups', async (req, res) => {
+// ── Orphaned backups — backups whose user no longer exists (deleted accounts) ─
+router.get('/orphaned-backups', async (req, res) => {
   try {
-    const backups = await Backup.find({ userId: req.params.id })
-      .select('date habitCount entryCount createdAt')
-      .sort({ date: -1 })
-      .limit(30);
-    res.json(backups);
+    const backups = await Backup.find({})
+      .select('userId username date habitCount entryCount updatedAt')
+      .sort({ updatedAt: -1 });
+    const ids = backups.map((b) => b.userId);
+    const existing = new Set(
+      (await User.find({ _id: { $in: ids } }).select('_id')).map((u) => String(u._id)),
+    );
+    const orphaned = backups.filter((b) => !existing.has(String(b.userId)));
+    res.json(orphaned);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch user backups', message: err.message });
+    res.status(500).json({ error: 'Failed to fetch orphaned backups', message: err.message });
   }
 });
 
-// ── Download a backup — returns a short-lived Supabase signed URL ─────────────
-router.get('/users/:id/backups/:date/download', async (req, res) => {
+// ── Get the single latest backup for a user ──────────────────────────────────
+router.get('/users/:id/backup', async (req, res) => {
   try {
-    const backup = await Backup.findOne({ userId: req.params.id, date: req.params.date });
+    const backup = await Backup.findOne({ userId: req.params.id })
+      .select('date habitCount entryCount updatedAt');
+    res.json(backup || null);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch user backup', message: err.message });
+  }
+});
+
+// ── Download the latest backup — returns a short-lived Supabase signed URL ────
+router.get('/users/:id/backup/download', async (req, res) => {
+  try {
+    const backup = await Backup.findOne({ userId: req.params.id });
     if (!backup) return res.status(404).json({ error: 'Backup not found' });
 
     const user = await User.findById(req.params.id).select('username email');
-    const rawName = user?.username || user?.email || 'user';
+    const rawName = user?.username || backup.username || user?.email || 'user';
     const safeName = rawName.replace(/[^a-zA-Z0-9-_]+/g, '_').replace(/^_+|_+$/g, '');
-    const filename = `habit-backup_${safeName}_${req.params.date}.csv`;
+    const filename = `habit-backup_${safeName}_${backup.date}.csv`;
 
     const { data, error } = await supabase.storage
       .from(BACKUP_BUCKET)
@@ -193,22 +216,15 @@ router.delete('/users/:id', async (req, res) => {
     if (!target) return res.status(404).json({ error: 'User not found' });
     if (target.isAdmin) return res.status(400).json({ error: 'Cannot delete another admin account' });
 
-    // Collect backup file paths before deleting MongoDB records
-    const backups = await Backup.find({ userId: id }).select('filePath');
-    const filePaths = backups.map((b) => b.filePath).filter(Boolean);
-
+    // The user's Backup (Mongo doc + Supabase CSV) is intentionally PRESERVED so the
+    // account can be recovered later from "Orphaned backups". Only live data is removed.
     await Promise.all([
       User.findByIdAndDelete(id),
       HabitDefinition.deleteMany({ userId: id }),
       Habit.deleteMany({ userId: id }),
       Subscription.deleteMany({ userId: id }),
-      Backup.deleteMany({ userId: id }),
     ]);
 
-    // Best-effort: remove backup files from Supabase Storage
-    if (filePaths.length > 0) {
-      await supabase.storage.from(BACKUP_BUCKET).remove(filePaths).catch(() => {});
-    }
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete user', message: err.message });
@@ -234,14 +250,22 @@ router.put('/users/:id/role', async (req, res) => {
 // ── Restore from stored backup (fetches CSV from Supabase) ───────────────────
 router.post('/restore-from-backup', async (req, res) => {
   try {
-    const { date, userId } = req.body;
-    if (!date || !userId) {
-      return res.status(400).json({ error: 'date and userId are required' });
+    const { userId, newUserPassword } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
     }
 
-    const backup = await Backup.findOne({ userId, date });
+    const backup = await Backup.findOne({ userId });
     if (!backup) {
-      return res.status(404).json({ error: `No backup found for ${date}` });
+      return res.status(404).json({ error: 'No backup found for this user' });
+    }
+
+    const userExists = await User.exists({ _id: userId });
+    if (!userExists && !newUserPassword) {
+      return res.status(400).json({ error: 'This account was deleted — provide a password to recreate it from the backup.' });
+    }
+    if (newUserPassword && String(newUserPassword).length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
     const { data: blob, error: downloadError } = await supabase.storage
@@ -253,7 +277,11 @@ router.post('/restore-from-backup', async (req, res) => {
     const arrayBuffer = await blob.arrayBuffer();
     const text = Buffer.from(arrayBuffer).toString('utf8');
 
-    const result = await restoreFromCsvText(text, userId);
+    // User still here → restore in place; deleted → recreate from the CSV's username.
+    const result = await restoreFromCsvText(
+      text,
+      userExists ? { targetUserId: userId } : { newUserPassword },
+    );
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Restore from backup failed', message: err.message });
@@ -278,7 +306,7 @@ router.post('/users/:id/generate-backup', async (req, res) => {
     const username = user.username || user.email || String(user._id);
     const rows = [[
       'Username', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon',
-      'Goal Enabled', 'Goal Value', 'Date', 'Value',
+      'Goal Enabled', 'Goal Value', 'Goal Direction', 'Date', 'Value',
     ]];
     let entryCount = 0;
 
@@ -294,6 +322,7 @@ router.post('/users/:id/generate-backup', async (req, res) => {
           escapeCsvCell(def.icon || ''),
           escapeCsvCell(def.goal?.enabled ? 'true' : 'false'),
           escapeCsvCell(def.goal?.enabled ? def.goal.value : ''),
+          escapeCsvCell(def.goal?.enabled ? (def.goal.direction || 'at_least') : ''),
           e.date,
           escapeCsvCell(String(e.value)),
         ]);
@@ -302,7 +331,7 @@ router.post('/users/:id/generate-backup', async (req, res) => {
     }
 
     const csv = rows.map((r) => r.join(',')).join('\n');
-    const filePath = `${user._id}/${dateKey}.csv`;
+    const filePath = `${user._id}/latest.csv`;
 
     const { error: uploadError } = await supabase.storage
       .from(BACKUP_BUCKET)
@@ -314,8 +343,8 @@ router.post('/users/:id/generate-backup', async (req, res) => {
     if (uploadError) throw uploadError;
 
     await Backup.findOneAndUpdate(
-      { userId: user._id, date: dateKey },
-      { filePath, habitCount: definitions.length, entryCount },
+      { userId: user._id },
+      { date: dateKey, username: user.username || '', filePath, habitCount: definitions.length, entryCount },
       { upsert: true, new: true }
     );
 
@@ -325,10 +354,10 @@ router.post('/users/:id/generate-backup', async (req, res) => {
   }
 });
 
-// ── Delete a specific backup snapshot ────────────────────────────────────────
-router.delete('/users/:id/backups/:date', async (req, res) => {
+// ── Delete a user's backup ───────────────────────────────────────────────────
+router.delete('/users/:id/backup', async (req, res) => {
   try {
-    const backup = await Backup.findOneAndDelete({ userId: req.params.id, date: req.params.date });
+    const backup = await Backup.findOneAndDelete({ userId: req.params.id });
     if (!backup) return res.status(404).json({ error: 'Backup not found' });
     // Best-effort: delete from Supabase (don't fail the request if this errors)
     await supabase.storage.from(BACKUP_BUCKET).remove([backup.filePath]).catch(() => {});
@@ -339,15 +368,17 @@ router.delete('/users/:id/backups/:date', async (req, res) => {
 });
 
 // ── Restore from uploaded CSV (same format as backup) ────────────────────────
-// Accepts: multipart or JSON-wrapped raw CSV text.
-// Expects the same CSV format the backup cron generates.
-router.post('/restore-data', async (req, res) => {
+// Accepts JSON-wrapped raw CSV text in the same format the backup cron generates.
+router.post('/restore-from-csv', async (req, res) => {
   try {
-    const { csvText } = req.body;
+    const { csvText, newUserPassword } = req.body;
     if (!csvText || typeof csvText !== 'string') {
       return res.status(400).json({ error: 'csvText (string) is required in the request body' });
     }
-    const result = await restoreFromCsvText(csvText);
+    if (newUserPassword && String(newUserPassword).length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    const result = await restoreFromCsvText(csvText, { newUserPassword: newUserPassword || null });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Restore failed', message: err.message });

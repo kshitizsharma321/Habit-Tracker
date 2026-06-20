@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
 import { Input } from './ui/input';
+import { PasswordInput } from './ui/password-input';
 import { notify } from '../lib/toast';
 
 export default function LoginPage({ onSwitch }) {
@@ -58,18 +59,17 @@ export default function LoginPage({ onSwitch }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="h-10"
-              placeholder="your_username"
+              placeholder="Enter your username"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Password</label>
-            <Input
-              type="password"
+            <PasswordInput
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="h-10"
-              placeholder="••••••••"
+              placeholder="Enter your password"
             />
           </div>
 

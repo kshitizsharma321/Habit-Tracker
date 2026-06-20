@@ -6,33 +6,6 @@ const { requireAuth } = require('../middleware/auth');
 
 const { TRACKING_TYPES } = require('../models/HabitDefinition');
 
-// ── Conversion helpers ──────────────────────────────────────────────────
-
-const CONVERSIONS = {
-  'completion->quantity': (value) => (value === 'yes' ? 1 : 0),
-  'quantity->completion': (value) => (Number(value) > 0 ? 'yes' : 'no'),
-};
-
-function convertEntries(entries, oldType, newType) {
-  const results = { converted: 0, skipped: 0, sample: [] };
-  const key = `${oldType}->${newType}`;
-  const converter = CONVERSIONS[key];
-
-  for (const entry of entries) {
-    if (entry.value === undefined || entry.value === null) {
-      results.skipped++;
-      continue;
-    }
-    const rawValue = entry.value;
-    const newValue = converter(rawValue, entry);
-    if (results.sample.length < 3) {
-      results.sample.push({ date: entry.date, old: rawValue, new: newValue });
-    }
-    results.converted++;
-  }
-  return results;
-}
-
 // ── GET / — list all definitions ───────────────────────────────────────
 
 router.get('/', requireAuth, async (req, res) => {
@@ -57,12 +30,21 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `trackingType must be one of: ${TRACKING_TYPES.join(', ')}` });
     }
 
+    // Block case-insensitive duplicate names for this user ("Exercise" === "exercise").
+    const duplicate = await HabitDefinition.findOne({ userId: req.user._id, name: name.trim() })
+      .collation({ locale: 'en', strength: 2 });
+    if (duplicate) {
+      return res.status(409).json({ error: `You already have a habit called "${duplicate.name}".` });
+    }
+
     let goalData;
     if (trackingType === 'quantity') {
-      if (!goal?.value || goal.value < 1) {
-        return res.status(400).json({ error: 'Quantity habits require a goal value' });
+      const goalValue = Number(goal?.value);
+      if (!goalValue || !isFinite(goalValue) || goalValue <= 0) {
+        return res.status(400).json({ error: 'Quantity habits require a positive goal value' });
       }
-      goalData = { enabled: true, value: goal.value };
+      const direction = goal?.direction === 'at_most' ? 'at_most' : 'at_least';
+      goalData = { enabled: true, value: Math.round(goalValue * 100) / 100, direction };
     } else {
       goalData = { enabled: false, value: 1 };
     }
@@ -92,15 +74,24 @@ router.post('/bulk', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'habits array is required' });
     }
 
+    // Skip case-insensitive duplicates — both already-existing habits and repeats within this batch.
+    const existing = await HabitDefinition.find({ userId: req.user._id }).select('name');
+    const seenNames = new Set(existing.map((d) => d.name.trim().toLowerCase()));
+
     const created = [];
     for (const h of habits) {
       if (!h.name || !h.trackingType || !TRACKING_TYPES.includes(h.trackingType)) continue;
+      const nameKey = h.name.trim().toLowerCase();
+      if (seenNames.has(nameKey)) continue;
+      seenNames.add(nameKey);
       const def = await HabitDefinition.create({
         userId: req.user._id,
         name: h.name,
         trackingType: h.trackingType,
         unit: h.trackingType === 'quantity' ? (h.unit || '') : undefined,
-        goal: h.goal?.enabled ? h.goal : undefined,
+        goal: h.goal?.enabled
+          ? { enabled: true, value: h.goal.value, direction: h.goal.direction === 'at_most' ? 'at_most' : 'at_least' }
+          : undefined,
         color: h.color || '#22c55e',
         icon: h.icon || '📌',
       });
@@ -191,11 +182,28 @@ router.put('/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `trackingType must be one of: ${TRACKING_TYPES.join(', ')}` });
     }
 
+    if (updates.name) {
+      const duplicate = await HabitDefinition.findOne({
+        userId: req.user._id,
+        name: updates.name.trim(),
+        _id: { $ne: def._id },
+      }).collation({ locale: 'en', strength: 2 });
+      if (duplicate) {
+        return res.status(409).json({ error: `You already have a habit called "${duplicate.name}".` });
+      }
+    }
+
     // Enforce goal rules on update
     const effectiveType = updates.trackingType || def.trackingType;
     if (updates.goal) {
       if (effectiveType === 'quantity') {
+        const goalValue = Number(updates.goal.value);
+        if (!goalValue || !isFinite(goalValue) || goalValue <= 0) {
+          return res.status(400).json({ error: 'Quantity habits require a positive goal value' });
+        }
         updates.goal.enabled = true;
+        updates.goal.value = Math.round(goalValue * 100) / 100;
+        updates.goal.direction = updates.goal.direction === 'at_most' ? 'at_most' : 'at_least';
       } else {
         updates.goal.enabled = false;
       }
@@ -226,56 +234,6 @@ router.delete('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// ── POST /:id/change-type ──────────────────────────────────────────────
-
-router.post('/:id/change-type', requireAuth, async (req, res) => {
-  try {
-    const { newType } = req.body;
-    if (!newType || !TRACKING_TYPES.includes(newType)) {
-      return res.status(400).json({ error: `newType must be one of: ${TRACKING_TYPES.join(', ')}` });
-    }
-
-    const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
-    if (!def) return res.status(404).json({ error: 'Habit not found' });
-    if (def.trackingType === newType) {
-      return res.status(400).json({ error: 'Already using this tracking type' });
-    }
-
-    const entries = await Habit.find({ habitId: def._id, userId: req.user._id });
-    const oldType = def.trackingType;
-
-    const preview = convertEntries(entries, oldType, newType);
-
-    if (entries.length > 0 && req.query.preview === 'true') {
-      return res.json({ preview, entryCount: entries.length });
-    }
-
-    const converter = CONVERSIONS[`${oldType}->${newType}`];
-    def.trackingType = newType;
-    if (newType === 'quantity') {
-      def.unit = req.body.unit || '';
-    } else {
-      def.unit = '';
-    }
-
-    await def.save();
-
-    if (converter && entries.length > 0) {
-      const bulkOps = entries.map((entry) => ({
-        updateOne: {
-          filter: { _id: entry._id },
-          update: { $set: { value: converter(entry.value, entry) } },
-        },
-      }));
-      await Habit.bulkWrite(bulkOps);
-    }
-
-    res.json({ success: true, changed: entries.length, definition: def });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to change habit type', message: error.message });
-  }
-});
-
 // ── Entry routes ───────────────────────────────────────────────────────
 
 router.get('/:id/entries', requireAuth, async (req, res) => {
@@ -300,20 +258,25 @@ router.post('/:id/entries', requireAuth, async (req, res) => {
     if (!def) return res.status(404).json({ error: 'Habit not found' });
 
     const { date, value } = req.body;
-    if (!date || value === undefined) {
+    if (!date || value === undefined || value === null) {
       return res.status(400).json({ error: 'Date and value are required' });
     }
 
-    if (def.trackingType === 'completion' && !['yes', 'no'].includes(value)) {
-      return res.status(400).json({ error: 'Completion habits require "yes" or "no"' });
-    }
-    if (def.trackingType === 'quantity' && typeof value !== 'number') {
-      return res.status(400).json({ error: 'Quantity habits require a number' });
+    let finalValue = value;
+    if (def.trackingType === 'completion') {
+      if (!['yes', 'no'].includes(value)) {
+        return res.status(400).json({ error: 'Completion habits require "yes" or "no"' });
+      }
+    } else if (def.trackingType === 'quantity') {
+      if (typeof value !== 'number' || !isFinite(value) || value < 0) {
+        return res.status(400).json({ error: 'Quantity habits require a non-negative number' });
+      }
+      finalValue = Math.round(value * 100) / 100;
     }
 
     const entry = await Habit.findOneAndUpdate(
       { userId: req.user._id, habitId: def._id, date },
-      { value },
+      { value: finalValue },
       { new: true, upsert: true },
     );
 

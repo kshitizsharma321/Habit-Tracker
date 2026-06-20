@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
 import { Input } from './ui/input';
+import { PasswordInput } from './ui/password-input';
 import { checkUsernameAvailability } from '../api/authApi';
 
 export default function RegisterPage({ onSwitch }) {
@@ -99,7 +100,7 @@ export default function RegisterPage({ onSwitch }) {
               value={username}
               onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
               className="h-10"
-              placeholder="your_username"
+              placeholder="Choose a username"
             />
             {usernameHint && (
               <p className={`text-xs mt-1 ${usernameHint.color}`}>{usernameHint.text}</p>
@@ -116,8 +117,7 @@ export default function RegisterPage({ onSwitch }) {
           </div>
           <div>
             <label className="block text-sm font-medium text-text-primary mb-1">Password</label>
-            <Input
-              type="password"
+            <PasswordInput
               required
               minLength={6}
               value={password}

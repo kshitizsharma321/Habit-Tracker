@@ -1,4 +1,4 @@
-import { apiFetch, apiFetchJSON } from './client';
+import { apiFetchJSON } from './client';
 
 export const fetchAdminStats = () => apiFetchJSON('/admin/stats');
 
@@ -16,32 +16,36 @@ export const updateAdminRole = (userId, isAdmin) =>
 export const fetchAdminUserHabits = (userId) =>
   apiFetchJSON(`/admin/users/${userId}/habits`);
 
-export const fetchAdminUserBackups = (userId) =>
-  apiFetchJSON(`/admin/users/${userId}/backups`);
+// The single latest backup for a user (or null).
+export const fetchAdminUserBackup = (userId) =>
+  apiFetchJSON(`/admin/users/${userId}/backup`);
+
+// Backups whose user was deleted — recoverable accounts.
+export const fetchOrphanedBackups = () => apiFetchJSON('/admin/orphaned-backups');
 
 // Returns { signedUrl } — a short-lived Supabase signed URL for direct browser download.
-export const downloadUserBackup = (userId, date) =>
-  apiFetchJSON(`/admin/users/${userId}/backups/${date}/download`);
+export const downloadUserBackup = (userId) =>
+  apiFetchJSON(`/admin/users/${userId}/backup/download`);
 
-// Restore from a backup stored in MongoDB (identified by userId + date).
-export const restoreFromBackup = ({ date, userId }) =>
+// Restore a user from their stored backup. `newUserPassword` recreates a deleted account.
+export const restoreFromBackup = ({ userId, newUserPassword }) =>
   apiFetchJSON('/admin/restore-from-backup', {
     method: 'POST',
-    body: JSON.stringify({ date, userId }),
+    body: JSON.stringify({ userId, newUserPassword }),
   });
 
 // Restore from an uploaded CSV file (same format as the backup).
-// Sends the raw CSV text to the backend for parsing.
-export const restoreAdminData = (csvText) =>
-  apiFetchJSON('/admin/restore-data', {
+// `newUserPassword` recreates any accounts named in the CSV that no longer exist.
+export const restoreFromUploadedCsv = (csvText, newUserPassword) =>
+  apiFetchJSON('/admin/restore-from-csv', {
     method: 'POST',
-    body: JSON.stringify({ csvText }),
+    body: JSON.stringify({ csvText, newUserPassword }),
   });
 
-// Generate a fresh backup for a user right now (overwrites today's snapshot).
+// Generate a fresh backup for a user right now (overwrites their single backup).
 export const generateUserBackup = (userId) =>
   apiFetchJSON(`/admin/users/${userId}/generate-backup`, { method: 'POST' });
 
-// Delete a specific backup snapshot by date.
-export const deleteUserBackup = (userId, date) =>
-  apiFetchJSON(`/admin/users/${userId}/backups/${date}`, { method: 'DELETE' });
+// Delete a user's backup.
+export const deleteUserBackup = (userId) =>
+  apiFetchJSON(`/admin/users/${userId}/backup`, { method: 'DELETE' });

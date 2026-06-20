@@ -42,6 +42,13 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
     }
   }, [isSaving, dateKey, onLog, trackingType, onAnimationTrigger]);
 
+  // Quantity entries must be a non-negative number, capped to 2 decimals. Empty/invalid is ignored.
+  const logIfValid = useCallback((raw) => {
+    const val = parseFloat(raw);
+    if (isNaN(val) || val < 0) return;
+    handleLog(Math.round(val * 100) / 100);
+  }, [handleLog]);
+
   const renderInput = () => {
     switch (trackingType) {
       case 'completion':
@@ -65,22 +72,16 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
           <div className="flex flex-col gap-2 mt-2">
             <div className="flex items-center gap-2">
               <Input
-                type="number" min="0" step="any" value={numericValue}
+                type="number" min="0" step="0.01" value={numericValue}
                 onChange={(e) => setNumericValue(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const val = parseFloat(numericValue);
-                    if (!isNaN(val) && val >= 0) handleLog(val);
-                  }
+                  if (e.key === 'Enter') logIfValid(numericValue);
                 }}
-                placeholder="0"
-                className="w-24 text-center"
+                placeholder="Amount"
+                className="w-28 text-center"
               />
               {unit && <span className="text-sm text-muted-foreground">{unit}</span>}
-              <Button onClick={() => {
-                const val = parseFloat(numericValue);
-                if (!isNaN(val) && val >= 0) handleLog(val);
-              }} disabled={isSaving || numericValue === ''}>
+              <Button onClick={() => logIfValid(numericValue)} disabled={isSaving || numericValue === ''}>
                 📝 Log
               </Button>
             </div>

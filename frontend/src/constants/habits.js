@@ -1,4 +1,4 @@
-// Color palette — exactly 10 tokens used across all templates and the color picker.
+// Color palette — 15 tokens for the color picker (templates use a subset).
 // Distribution tries to avoid same-color neighbors within a category.
 //
 // green   #22c55e — nature, health habits
@@ -11,46 +11,36 @@
 // teal    #14b8a6 — movement, finance
 // red     #ef4444 — strength, restriction
 // orange  #f97316 — energy, discipline
+// lime    #84cc16 — fresh, growth
+// sky     #0ea5e9 — clarity, focus
+// fuchsia #d946ef — creativity, fun
+// rose    #f43f5e — passion, love
+// slate   #64748b — neutral, minimal
 
 export const TEMPLATES = [
   // ── Core habits ──────────────────────────────────────────────────────────────
-  { name: 'Exercise',    icon: '🏋️', type: 'completion', color: '#22c55e' },
+  { name: 'Exercise',    icon: '🏋️', type: 'completion', color: '#22c55e', unit: 'minutes',   goal: { value: 30 } },
   { name: 'Study',       icon: '📚', type: 'quantity',   color: '#3b82f6', unit: 'hours',   goal: { value: 2 } },
   { name: 'Read',        icon: '📖', type: 'completion', color: '#a855f7' },
   { name: 'Meditate',    icon: '🧘', type: 'completion', color: '#f59e0b' },
   { name: 'Water',       icon: '💧', type: 'quantity',   color: '#06b6d4', unit: 'glasses', goal: { value: 8 } },
   { name: 'Sleep',       icon: '😴', type: 'quantity',   color: '#6366f1', unit: 'hours',   goal: { value: 8 } },
   { name: 'Steps',       icon: '👟', type: 'quantity',   color: '#14b8a6', unit: 'steps',   goal: { value: 8000 } },
-  { name: 'Journal',     icon: '✍️', type: 'completion', color: '#ec4899' },
   { name: 'Coding',      icon: '💻', type: 'quantity',   color: '#3b82f6', unit: 'hours',   goal: { value: 2 } },
 
   // ── Fitness ──────────────────────────────────────────────────────────────────
   { name: 'Running',      icon: '🏃', type: 'quantity',   color: '#f97316', unit: 'km',   goal: { value: 5 } },
-  { name: 'Pushups',      icon: '💪', type: 'quantity',   color: '#ef4444', unit: 'reps', goal: { value: 30 } },
+  { name: 'Pushups',      icon: '💪', type: 'quantity',   color: '#ef4444', unit: 'reps', goal: { value: 20 } },
   { name: 'Yoga',         icon: '🤸', type: 'completion', color: '#a855f7' },
   { name: 'Outdoor Walk', icon: '🌳', type: 'completion', color: '#22c55e' },
-  { name: 'Cold Shower',  icon: '🚿', type: 'completion', color: '#06b6d4' },
 
   // ── Mind & wellbeing ─────────────────────────────────────────────────────────
-  { name: 'Mindfulness',        icon: '🧠', type: 'quantity',   color: '#f59e0b', unit: 'minutes', goal: { value: 10 } },
-  { name: 'Gratitude',          icon: '🙏', type: 'completion', color: '#ec4899' },
-  { name: 'No Social Media',    icon: '📵', type: 'completion', color: '#ef4444' },
+  { name: 'Mindfulness',         icon: '🧠', type: 'quantity',   color: '#f59e0b', unit: 'minutes', goal: { value: 10 } },
   { name: 'Screen-free Evening', icon: '📺', type: 'completion', color: '#6366f1' },
 
   // ── Learning ─────────────────────────────────────────────────────────────────
   { name: 'Language Practice', icon: '🌍', type: 'completion', color: '#3b82f6' },
-  { name: 'Reading Pages',     icon: '📄', type: 'quantity',   color: '#a855f7', unit: 'pages', goal: { value: 20 } },
 
-  // ── Health habits ────────────────────────────────────────────────────────────
-  { name: 'Vitamins',             icon: '💊', type: 'completion', color: '#22c55e' },
-  { name: 'Flossing',             icon: '🦷', type: 'completion', color: '#06b6d4' },
-  { name: 'Sunscreen',            icon: '☀️', type: 'completion', color: '#f59e0b' },
-  { name: 'No Alcohol',           icon: '🍷', type: 'completion', color: '#ef4444' },
-  { name: 'Intermittent Fasting', icon: '⏰', type: 'completion', color: '#f97316' },
-
-  // ── Finance & productivity ───────────────────────────────────────────────────
-  { name: 'Budget Review', icon: '💰', type: 'completion', color: '#14b8a6' },
-  { name: 'Posture Check', icon: '🧍', type: 'completion', color: '#6366f1' },
 ];
 
 export const COLORS = [
@@ -64,6 +54,11 @@ export const COLORS = [
   '#14b8a6', // teal
   '#ef4444', // red
   '#f97316', // orange
+  '#84cc16', // lime
+  '#0ea5e9', // sky
+  '#d946ef', // fuchsia
+  '#f43f5e', // rose
+  '#64748b', // slate
 ];
 
 export const TYPE_LABELS = {
