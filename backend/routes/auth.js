@@ -186,10 +186,11 @@ router.put('/profile', requireAuth, async (req, res) => {
     }
 
     if (email !== undefined) {
-      const newEmail = validateEmail(email);
-      const existing = await User.findOne({ email: newEmail, _id: { $ne: req.user._id } });
-      if (existing) {
-        return res.status(409).json({ error: 'Email already in use' });
+      // Empty string → null (clears the email); never store "" which breaks sparse-unique
+      const newEmail = email.trim() ? validateEmail(email) : null;
+      if (newEmail) {
+        const existing = await User.findOne({ email: newEmail, _id: { $ne: req.user._id } });
+        if (existing) return res.status(409).json({ error: 'Email already in use' });
       }
       updates.email = newEmail;
     }
