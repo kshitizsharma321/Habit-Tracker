@@ -246,7 +246,7 @@ cron.schedule('55 18 * * *', async () => {
       const username = user.username || user.email || String(user._id);
       const rows = [[
         'Username', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon',
-        'Goal Enabled', 'Goal Value', 'Date', 'Value',
+        'Goal Enabled', 'Goal Value', 'Goal Direction', 'Date', 'Value',
       ]];
       let entryCount = 0;
 
@@ -262,6 +262,7 @@ cron.schedule('55 18 * * *', async () => {
             escapeCsvCell(def.icon || ''),
             escapeCsvCell(def.goal?.enabled ? 'true' : 'false'),
             escapeCsvCell(def.goal?.enabled ? def.goal.value : ''),
+            escapeCsvCell(def.goal?.enabled ? (def.goal.direction || 'at_least') : ''),
             e.date,
             escapeCsvCell(String(e.value)),
           ]);
@@ -272,7 +273,7 @@ cron.schedule('55 18 * * *', async () => {
       if (entryCount === 0) continue;
 
       const csv = rows.map((r) => r.join(',')).join('\n');
-      const filePath = `${user._id}/${dateKey}.csv`;
+      const filePath = `${user._id}/latest.csv`;
 
       const { error: uploadError } = await supabase.storage
         .from(BACKUP_BUCKET)
@@ -287,8 +288,8 @@ cron.schedule('55 18 * * *', async () => {
       }
 
       await Backup.findOneAndUpdate(
-        { userId: user._id, date: dateKey },
-        { filePath, habitCount: definitions.length, entryCount },
+        { userId: user._id },
+        { date: dateKey, username: user.username || '', filePath, habitCount: definitions.length, entryCount },
         { upsert: true, new: true }
       );
       written++;

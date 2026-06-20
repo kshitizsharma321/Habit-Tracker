@@ -54,18 +54,3 @@ export function linearRegression(yValues) {
     percentageChange: Math.round(percentageChange),
   };
 }
-
-/**
- * Predict future values using the regression line.
- * @param {number[]} values - Historical values
- * @param {number} steps - How many steps ahead to predict
- * @returns {number[]}
- */
-export function forecast(values, steps = 7) {
-  const { slope, intercept } = linearRegression(values);
-  const predictions = [];
-  for (let i = 0; i < steps; i++) {
-    predictions.push(+(slope * (values.length + i) + intercept).toFixed(2));
-  }
-  return predictions;
-}

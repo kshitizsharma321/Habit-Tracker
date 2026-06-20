@@ -6,9 +6,11 @@ import {
   googleLogin as apiGoogleLogin,
   fetchMe,
   updateProfile as apiUpdateProfile,
+  deleteAccount as apiDeleteAccount,
   setToken,
   getToken,
 } from '../api/authApi';
+import { teardownPushNotifications } from '../hooks/useNotifications';
 
 const AuthContext = createContext(null);
 
@@ -58,14 +60,23 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    await teardownPushNotifications();
+    setToken(null);
+    setUser(null);
+    queryClient.clear();
+  }, [queryClient]);
+
+  const deleteAccount = useCallback(async () => {
+    await apiDeleteAccount();
+    await teardownPushNotifications();
     setToken(null);
     setUser(null);
     queryClient.clear();
   }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, loginWithGoogle, updateUser, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, loginWithGoogle, updateUser, logout, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   );

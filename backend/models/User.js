@@ -12,10 +12,11 @@ const userSchema = new mongoose.Schema({
     maxlength: [30, 'Username must be at most 30 characters'],
     match: [/^[a-z0-9_]+$/, 'Username can only contain lowercase letters, numbers, and underscores'],
   },
+  // Optional — username is the universal identifier. Sparse unique allows many users with no email.
   email: {
     type: String,
-    required: true,
     unique: true,
+    sparse: true,
     lowercase: true,
     trim: true,
   },

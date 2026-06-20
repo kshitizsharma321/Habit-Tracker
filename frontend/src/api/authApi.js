@@ -45,3 +45,7 @@ export async function changePassword({ currentPassword, newPassword }) {
     body: JSON.stringify({ currentPassword, newPassword }),
   });
 }
+
+export async function deleteAccount() {
+  return apiFetchJSON('/auth/account', { method: 'DELETE' });
+}

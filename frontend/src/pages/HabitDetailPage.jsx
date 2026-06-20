@@ -163,7 +163,7 @@ export default function HabitDetailPage() {
       return calculateStreaks(entries);
     }
     if (definition?.trackingType === 'quantity' && definition?.goal?.value > 0) {
-      return calculateStreaksFromGoal(entries, definition.goal.value);
+      return calculateStreaksFromGoal(entries, definition.goal.value, definition.goal.direction);
     }
     return null;
   }, [entries, definition]);
@@ -220,6 +220,12 @@ export default function HabitDetailPage() {
               >
                 {TYPE_LABELS[definition.trackingType] || definition.trackingType}
               </Badge>
+              {definition.trackingType === 'quantity' && definition.goal?.value > 0 && (
+                <p className="text-xs mt-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  {definition.goal.direction === 'at_most' ? 'Limit: ≤' : 'Target: ≥'} {definition.goal.value}
+                  {definition.unit ? ` ${definition.unit}` : ''} / day
+                </p>
+              )}
             </div>
           </div>
 
@@ -245,7 +251,7 @@ export default function HabitDetailPage() {
               variant="outline"
               size="sm"
               className="text-xs"
-              onClick={() => navigate('/manage')}
+              onClick={() => navigate(`/manage?edit=${habitId}`)}
             >
               ✏️ Edit
             </Button>

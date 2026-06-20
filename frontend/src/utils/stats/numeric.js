@@ -25,21 +25,14 @@ export function getNumericStats(data) {
   return { count, avg, min, max, total: +total.toFixed(2), median, stdDev };
 }
 
-export function getMovingAverage(data, window = 7) {
-  const keys = getSortedKeys(data);
-  const numeric = keys
-    .map((k) => data[k])
-    .filter((v) => typeof v === 'number' && !isNaN(v));
-
-  if (numeric.length < window) return [];
-
-  const result = [];
-  for (let i = window - 1; i < numeric.length; i++) {
-    const slice = numeric.slice(i - window + 1, i + 1);
-    const avg = slice.reduce((a, b) => a + b, 0) / window;
-    result.push(+avg.toFixed(2));
-  }
-  return result;
+/**
+ * Whether a logged value satisfies the goal, honoring the goal direction.
+ * - 'at_least' (default): success when value >= goal  (build-up habits)
+ * - 'at_most':            success when value <= goal  (reduction habits, e.g. screen time)
+ */
+export function isGoalMet(value, goalValue, direction = 'at_least') {
+  if (typeof value !== 'number' || isNaN(value)) return false;
+  return direction === 'at_most' ? value <= goalValue : value >= goalValue;
 }
 
 export function getNumericTrend(data) {

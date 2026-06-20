@@ -115,7 +115,7 @@ export default function NotificationSettings() {
             >
               <SelectTrigger className="w-[72px] h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {[0, 15, 30, 45].map((m) => (
+                {Array.from({ length: 60 }, (_, i) => i).map((m) => (
                   <SelectItem key={m} value={String(m)}>{String(m).padStart(2, '0')}</SelectItem>
                 ))}
               </SelectContent>

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { getDateKey, dateFormatters } from '../../utils/dates';
+import { isGoalMet } from '../../utils/stats';
 import styles from './StreakCalendar.module.scss';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -43,15 +44,20 @@ export default function StreakCalendar({ habitData, definition }) {
     return { grid };
   }, [habitData]);
 
-  const goalValue = definition?.trackingType === 'quantity' && definition?.goal?.enabled
+  // Derive from goal.value presence (not goal.enabled) so a present target always
+  // colors quantity cells — fixes quantity heatmaps that didn't reflect entries.
+  const goalValue = definition?.trackingType === 'quantity' && definition?.goal?.value
     ? definition.goal.value
     : null;
+  const goalDirection = definition?.goal?.direction || 'at_least';
 
   function getCellStyle(r, isToday) {
     if (r === 'yes') return styles.yes;
     if (r === 'no') return styles.no;
     if (typeof r === 'number') {
-      if (goalValue != null) return r >= goalValue ? styles.yes : styles.neutral;
+      // A logged value that misses the goal is styled 'no' (red) — not 'neutral' —
+      // so logged days are visually distinct from empty no-data days.
+      if (goalValue != null) return isGoalMet(r, goalValue, goalDirection) ? styles.yes : styles.no;
       return r > 0 ? styles.yes : styles.no;
     }
     if (r === null) return isToday ? styles.todayUnlogged : styles.neutral;
@@ -64,7 +70,12 @@ export default function StreakCalendar({ habitData, definition }) {
     if (typeof r === 'number') {
       const unit = definition?.unit ? ' ' + definition.unit : '';
       if (goalValue != null) {
-        return r >= goalValue
+        if (goalDirection === 'at_most') {
+          return isGoalMet(r, goalValue, 'at_most')
+            ? `✅ ${r}${unit} — under limit!`
+            : `📊 ${r}${unit} — limit: ${goalValue}`;
+        }
+        return isGoalMet(r, goalValue, 'at_least')
           ? `✅ ${r}${unit} — goal met!`
           : `📊 ${r}${unit} — target: ${goalValue}`;
       }

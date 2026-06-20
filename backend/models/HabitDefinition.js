@@ -4,7 +4,10 @@ const TRACKING_TYPES = ['completion', 'quantity'];
 
 const goalSchema = new mongoose.Schema({
   enabled: { type: Boolean, default: false },
-  value: { type: Number, default: 1, min: 1 },
+  value: { type: Number, default: 1, min: 0.01 },
+  // 'at_least' = success when value >= target (build-up habits, the default)
+  // 'at_most'  = success when value <= target (reduction habits, e.g. screen time)
+  direction: { type: String, enum: ['at_least', 'at_most'], default: 'at_least' },
 }, { _id: false });
 
 const habitDefinitionSchema = new mongoose.Schema({

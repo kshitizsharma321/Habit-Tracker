@@ -48,6 +48,8 @@ export function useHabitEntries(habitId, trackingType) {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey });
+      // Keep Today / Dashboard (the ['dashboard'] cache) in sync with entries logged here.
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
   });
 

@@ -30,15 +30,24 @@ A full-stack, multi-user habit tracking web app. Create any number of habits, lo
 - Create habits with a custom **name, colour, and icon**.
 - Two tracking types:
   - **Completion** — yes/no. Streak builds from consecutive "done" days.
-  - **Quantity** — numeric (km, hours, pages, glasses…). Set a threshold goal; a day counts toward the streak when you meet or exceed it.
-- Edit, reorder (drag), and delete habits at any time. Deleting a habit clears its entries.
-- **Template picker** for quick setup (Exercise, Reading, Water, etc.).
+  - **Quantity** — numeric (km, hours, pages, glasses…). Set a goal with a **direction**:
+    - **Reach at least** (build-up) — a day counts when you meet or exceed the target (e.g. ≥ 8 glasses of water).
+    - **Stay under** (cut-down) — a day counts when you stay at or below the limit (e.g. ≤ 1 hr screen time).
+- Edit, **drag to reorder** (persists instantly, no Save button — with up/down arrow fallback on touch), and delete habits at any time. Deleting a habit clears its entries.
+- **Duplicate-name protection** — habit names are blocked case-insensitively per user.
+- **Template picker** for quick setup (Exercise, Reading, Water, etc.) with an "Add your own" card; already-added templates are marked and disabled.
+- **Milestone celebrations** — hit a 7/10/30/60/100-day streak and get a confetti burst (respects `prefers-reduced-motion`).
 
-### Daily Dashboard
-- All habits on one page; log inline without leaving the dashboard.
+### Track (Today)
+- All habits on one page; log inline without leaving the page.
 - Log for a **past date** via the custom in-app date picker.
 - **Optimistic updates** — the UI responds instantly and rolls back on failure.
 - Friendly, themed toast feedback on every action.
+
+### Dashboard
+- A motivation-first hub: time-based greeting, a **today's-progress ring**, and at-a-glance chips (habits done, active streaks, longest active streak).
+- **Motivation & insights** — top-performer and needs-attention cards, plus an auto-generated insights digest.
+- A compact per-habit strip; clicking a habit opens its detail page. Renders gracefully for 0, 1, or many habits.
 
 ### Per-Habit Detail
 A clean three-tab view (the URL stays a generic `/detail` — no ugly id):
@@ -54,30 +63,32 @@ A clean three-tab view (the URL stays a generic `/detail` — no ugly id):
   - **Wilson Score** lower bound for a confidence-adjusted consistency score
   - **Z-score** anomaly / personal-best detection
   - **Coefficient of Variation** for stability
-  - **Pearson correlation** for day-of-week patterns
-  - DIY **linear regression + forecast**
+  - DIY **linear regression** for trend direction
 
 ### Authentication
 - **Username + password** registration and login (email optional; login also accepts email).
 - Live username-availability check on the register/settings forms.
 - **Google Sign-In** (one click) via `@react-oauth/google` + `google-auth-library`.
 - JWT stored in `localStorage`; each user sees only their own data.
-- Profile management: edit name/username/email, change password, toggle dark/light theme.
+- **Show/hide password** toggle on every password field.
+- Profile management: edit name/username/email, change password, toggle dark/light theme, and **delete your own account** (with confirmation; tears down push subscriptions and reminder settings).
 
 ### Push Notifications
-- Opt-in daily reminder at a **custom time** (per user), built on the Web Push API with VAPID keys and a service worker.
+- Opt-in daily reminder at a **custom time** (per user, any hour and minute 00–59), built on the Web Push API with VAPID keys and a service worker.
 - "Test now" button to verify delivery.
+- Logging out or deleting your account tears down the push subscription and clears reminder settings (no orphaned reminders).
 
 ### Admin
 - Role-gated admin dashboard (`user.isAdmin`):
   - Usage **stats** (users / habits / entries — admins excluded).
-  - **User management** — list, expand to view a user's habits, change role, delete (cascades all data + backup files).
-  - **Backup & Restore** — per-user snapshot browser: download (signed URL), generate on demand, delete, or restore.
-  - **CSV upload** — import entries from a backup-format CSV.
-  - **Refresh** button with a live loading spinner.
+  - **User management** — list, expand to view a user's habits, change role, delete. Deleting a user removes their habits and entries **but intentionally preserves their backup** for recovery.
+  - **Backup & Restore** — each user's single latest backup: download (signed URL), generate on demand, delete, or restore.
+  - **Orphaned backups** — backups whose user was deleted are listed separately and can be **recovered**, which recreates the account (admin sets a temporary password) and restores all habits + entries.
+  - **CSV upload** — import entries from a backup-format CSV; can recreate missing accounts named in the CSV.
+  - Responsive layout and a **Refresh** button with a live loading spinner.
 
 ### Backups
-- A nightly cron (23:55 IST) writes **one CSV per user** (all habits, all entries) and uploads it to a **private Supabase Storage bucket**. MongoDB stores only the file path.
+- A nightly cron (23:55 IST) writes **one CSV per user** (all habits, all entries) to a **private Supabase Storage bucket** at `<userId>/latest.csv`. Each run **overwrites** that single file, so backups never accumulate. MongoDB stores only the file path (plus a username snapshot so backups stay identifiable after deletion).
 - Downloads use **short-lived (1-hour) signed URLs**, so backup files are never publicly exposed.
 
 ---
@@ -86,7 +97,7 @@ A clean three-tab view (the URL stays a generic `/detail` — no ugly id):
 
 | Layer | Tech |
 |---|---|
-| Frontend | React 18, Vite 5, TanStack Query v5, Tailwind CSS 3, SCSS Modules, shadcn/ui (Radix), react-hot-toast |
+| Frontend | React 18, Vite 5, TanStack Query v5, Tailwind CSS 3, SCSS Modules, shadcn/ui (Radix), react-hot-toast, canvas-confetti |
 | Backend | Node.js, Express 4, Mongoose 8, node-cron |
 | Database | MongoDB Atlas (`habit-tracker` db) |
 | Backup storage | Supabase Storage (private `habit-backups` bucket) |
@@ -122,55 +133,56 @@ Habit Tracker/
 │   ├── server.js                   # Express entry — push sub routes, cron jobs, startup index sync, health
 │   ├── routes/
 │   │   ├── auth.js                 # register, login, google, me, check-username, profile, password, claim-data, delete
-│   │   ├── habitDefinitions.js     # habit CRUD + entries + type-change + dashboard
-│   │   └── admin.js                # admin: stats, users, role, per-user backups, restore, CSV import (requireAdmin)
+│   │   ├── habitDefinitions.js     # habit CRUD + entries + dashboard (with duplicate-name + quantity validation)
+│   │   └── admin.js                # admin: stats, users, role, per-user backup, orphaned backups, restore, CSV import (requireAdmin)
 │   ├── lib/
 │   │   └── supabase.js             # Supabase client (service-role) + BACKUP_BUCKET constant
 │   ├── middleware/
 │   │   └── auth.js                 # signToken(), requireAuth (loads full req.user)
 │   ├── models/
 │   │   ├── User.js                 # username (unique sparse), email?, password, name, googleId, isAdmin, onboardingComplete
-│   │   ├── HabitDefinition.js      # name, trackingType, unit, goal {enabled,value}, color, icon, order
+│   │   ├── HabitDefinition.js      # name, trackingType, unit, goal {enabled,value,direction}, color, icon, order
 │   │   ├── Habit.js                # userId, habitId, date, value — indexes {userId,habitId,date} & {userId,date}
 │   │   ├── Subscription.js         # Web Push subscriptions
-│   │   └── Backup.js               # backup reference: { userId, date, filePath, habitCount, entryCount }
+│   │   └── Backup.js               # backup ref: { userId, date, username, filePath, habitCount, entryCount } — unique on {userId}
 │   ├── .env.example
 │   └── package.json
 └── frontend/
     ├── src/
     │   ├── App.jsx                  # Root — providers, router, auth/onboarding gates, <Toaster>
-    │   ├── pages/                   # TodayPage, HabitDetailPage, ManagePage, SettingsPage, AdminDashboard
+    │   ├── pages/                   # TodayPage, DashboardPage, HabitDetailPage, ManagePage, SettingsPage, AdminDashboard
     │   ├── components/
-    │   │   ├── Layout.jsx           # App shell, header, mobile nav, Outlet context (definitions + mutations)
+    │   │   ├── Layout.jsx           # App shell, header, mobile nav (Track/Dashboard/Habits), Outlet context (definitions + mutations)
     │   │   ├── DynamicLogEntry/     # Type-aware log form (Done/Skip or numeric + presets)
-    │   │   ├── StreakCalendar/      # 5-week colour grid
+    │   │   ├── StreakCalendar/      # 5-week colour grid (direction-aware goal cells)
     │   │   ├── History/             # Year → month accordion
-    │   │   ├── ManageHabits/        # HabitForm, HabitList, TemplateList
-    │   │   ├── NotificationSettings/# Push toggle + custom time picker (Select)
+    │   │   ├── ManageHabits/        # HabitForm, HabitList (drag reorder), TemplateList ("Add your own")
+    │   │   ├── NotificationSettings/# Push toggle + custom time picker (hour + 00–59 minute)
     │   │   ├── OnboardingWizard/    # Template picker for new users
     │   │   ├── SmartInsights.jsx    # Generated insight cards
     │   │   ├── AnalyticsPanel.jsx   # Deep stats panel (gauge, charts, tips)
     │   │   ├── StatsGrid.jsx        # Stat cards
     │   │   ├── ProfileDropdown.jsx  # settings, theme, sign out
-    │   │   ├── LoginPage.jsx        # Username + password + Google
-    │   │   ├── RegisterPage.jsx     # Username (live availability) + email + password
-    │   │   └── ui/                  # shadcn/ui: button, card, dialog, input, select, switch, tabs, date-picker…
+    │   │   ├── LoginPage.jsx        # Username + password (show/hide) + Google
+    │   │   ├── RegisterPage.jsx     # Username (live availability) + email + password (show/hide)
+    │   │   └── ui/                  # shadcn/ui: button, card, dialog, input, password-input, select, switch, tabs, date-picker…
     │   ├── lib/
     │   │   ├── toast.jsx            # notify.success/error/info() — themed toast helper (use instead of react-hot-toast)
+    │   │   ├── celebrate.js         # canvas-confetti milestone fireworks (+ reduced-motion fallback)
     │   │   └── utils.js             # cn() classname helper
     │   ├── api/
     │   │   ├── client.js            # apiFetch / apiFetchJSON — auth headers, 401 redirect, base URL
-    │   │   ├── authApi.js           # register, login, checkUsernameAvailability, updateProfile…
+    │   │   ├── authApi.js           # register, login, checkUsernameAvailability, updateProfile, deleteAccount…
     │   │   ├── habitDefinitionsApi.js
     │   │   ├── entriesApi.js
     │   │   ├── onboardingApi.js
-    │   │   └── adminApi.js          # stats, users, backups, signed-URL download, restore
+    │   │   └── adminApi.js          # stats, users, backup, orphaned backups, signed-URL download, restore
     │   ├── hooks/                   # useHabitDefinitions, useHabitEntries, useOnboarding, useNotifications
     │   ├── contexts/                # AuthContext, ThemeContext
-    │   ├── constants/habits.js      # TEMPLATES, COLORS, TYPE_LABELS
+    │   ├── constants/               # habits.js (TEMPLATES, COLORS, TYPE_LABELS), milestones.js (CELEBRATION_MILESTONES)
     │   ├── utils/
     │   │   ├── dates.js             # getDateKey(), parseStoredDate() — IST timezone
-    │   │   └── stats/               # binary.js, numeric.js, insights.js, regression.js, shared.js
+    │   │   └── stats/               # binary.js, numeric.js (isGoalMet), insights.js, regression.js, shared.js
     │   └── styles/                  # globals.scss (CSS vars + dark mode), _animations.scss
     ├── vercel.json                  # SPA rewrite (all routes → index.html)
     ├── .env.example
@@ -246,7 +258,7 @@ Generate VAPID keys once: `npx web-push generate-vapid-keys`
 4. Copy the **Secret / `service_role` key** (NOT the publishable/anon key) → `SUPABASE_SERVICE_ROLE_KEY`.
 5. Add both to the backend environment (Render → Environment, and your local `backend/.env`).
 
-**How it works:** files are stored at `<userId>/<date>.csv` inside the private bucket. Because the bucket is private, there is no permanent public URL — the admin **Download** button mints a fresh 1-hour signed URL on demand (`GET /api/admin/users/:id/backups/:date/download`). The raw path stored in MongoDB is just the object key, not a clickable link. To grab a file ad-hoc, use that endpoint or the Supabase dashboard (Storage → file → *Get signed URL*).
+**How it works:** each user has exactly one file at `<userId>/latest.csv` inside the private bucket (every backup run overwrites it). Because the bucket is private, there is no permanent public URL — the admin **Download** button mints a fresh 1-hour signed URL on demand (`GET /api/admin/users/:id/backup/download`). The raw path stored in MongoDB is just the object key, not a clickable link. To grab a file ad-hoc, use that endpoint or the Supabase dashboard (Storage → file → *Get signed URL*).
 
 ---
 
@@ -324,7 +336,6 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 | PUT | `/api/habit-definitions/reorder` | Yes | `{ orderedIds }` |
 | PUT | `/api/habit-definitions/:id` | Yes | Update |
 | DELETE | `/api/habit-definitions/:id` | Yes | Delete def + all entries |
-| POST | `/api/habit-definitions/:id/change-type` | Yes | `{ newType, unit? }` (atomic conversion) |
 | GET | `/api/habit-definitions/:id/entries` | Yes | Date-keyed map |
 | POST | `/api/habit-definitions/:id/entries` | Yes | `{ date, value }` upsert |
 | POST | `/api/habit-definitions/:id/entries/bulk` | Yes | `{ entries: [...] }` chunked upsert |
@@ -336,14 +347,15 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 | GET | `/api/admin/stats` | Counts (admins excluded) |
 | GET | `/api/admin/users` | Non-admin users (no passwords) |
 | GET | `/api/admin/users/:id/habits` | A user's habits |
-| DELETE | `/api/admin/users/:id` | Delete user + cascade (incl. Supabase files) |
+| DELETE | `/api/admin/users/:id` | Delete user + cascade habits/entries (**backup preserved**) |
 | PUT | `/api/admin/users/:id/role` | `{ isAdmin }` |
-| GET | `/api/admin/users/:id/backups` | A user's snapshots (last 30) |
-| GET | `/api/admin/users/:id/backups/:date/download` | `{ signedUrl }` (1-hour Supabase link) |
-| POST | `/api/admin/users/:id/generate-backup` | Generate/overwrite today's backup |
-| DELETE | `/api/admin/users/:id/backups/:date` | Delete snapshot (MongoDB + Supabase) |
-| POST | `/api/admin/restore-from-backup` | `{ date, userId }` restore from stored backup |
-| POST | `/api/admin/restore-data` | `{ csvText }` import from raw CSV |
+| GET | `/api/admin/orphaned-backups` | Backups whose user was deleted (recoverable) |
+| GET | `/api/admin/users/:id/backup` | A user's single latest backup (or `null`) |
+| GET | `/api/admin/users/:id/backup/download` | `{ signedUrl }` (1-hour Supabase link) |
+| POST | `/api/admin/users/:id/generate-backup` | Generate/overwrite the user's backup |
+| DELETE | `/api/admin/users/:id/backup` | Delete the backup (MongoDB + Supabase) |
+| POST | `/api/admin/restore-from-backup` | `{ userId, newUserPassword? }` — restore; password recreates a deleted account |
+| POST | `/api/admin/restore-from-csv` | `{ csvText, newUserPassword? }` import from raw CSV |
 
 ### Push & System
 | Method | Path | Auth |
@@ -358,10 +370,10 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 ## Data Model
 
 - **User** — `username` (unique, sparse, primary login), `email?`, `password` (bcrypt), `name`, `googleId`, `isAdmin`, `onboardingComplete`.
-- **HabitDefinition** — `userId`, `name`, `trackingType` (`completion`|`quantity`), `unit`, `goal { enabled, value }`, `order`, `color`, `icon`.
+- **HabitDefinition** — `userId`, `name`, `trackingType` (`completion`|`quantity`), `unit`, `goal { enabled, value, direction }` (`direction` is `at_least` | `at_most`, default `at_least`), `order`, `color`, `icon`.
 - **Habit** (one entry) — `userId`, `habitId`, `date` (`YYYY-MM-DD`), `value` (`'yes'|'no'` or a number). Unique on `{userId, habitId, date}`; extra `{userId, date}` index powers the dashboard.
 - **Subscription** — `userId`, `endpoint`, `keys`, `reminderTime` (`HH:MM`).
-- **Backup** — `userId`, `date`, `filePath` (Supabase object key), `habitCount`, `entryCount`. Unique on `{userId, date}` (same-day re-runs overwrite).
+- **Backup** — `userId`, `date`, `username` (snapshot for post-deletion identification), `filePath` (Supabase object key, `<userId>/latest.csv`), `habitCount`, `entryCount`. **Unique on `{userId}`** — one overwriting backup per user.
 
 ---
 
@@ -374,6 +386,8 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 - **Generic detail route** — the per-habit page is `/detail` (no id in the URL); the active habit id lives in `sessionStorage` (`ht_active_habit`). Refresh-safe; a cold visit redirects home.
 - **Role is not in the JWT** — the token carries only `userId`; `requireAuth` loads the full user each request, and `user.isAdmin` drives both the UI and `requireAdmin`. Role changes apply immediately.
 - **Two tracking types only** — `completion` and `quantity`. (`choice` was removed and must not return.)
+- **Goal direction** — quantity goals are met via `isGoalMet(value, goal, direction)`: `at_least` (build up) or `at_most` (cut down). Threaded through streaks, the heatmap, and insights.
+- **One backup per user** — the backup is regenerable derived data; deleting a user preserves it so the account can be recovered from "Orphaned backups".
 
 ---
 
@@ -394,4 +408,4 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 
 ---
 
-*Last updated: June 2026 — Supabase Storage backups, generic `/detail` route, dashboard payload + index optimization, admin query gating, `notify` toast helper, username auth, analytics algorithms.*
+*Last updated: June 2026 — Dashboard page, goal direction (build-up / cut-down), milestone confetti, drag-to-reorder, duplicate-name protection, password show/hide, self-delete account, single-overwriting backups with orphaned-account recovery, Supabase Storage backups, generic `/detail` route, username auth.*

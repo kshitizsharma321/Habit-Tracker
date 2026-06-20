@@ -6,6 +6,8 @@ import { changePassword, checkUsernameAvailability } from '../api/authApi';
 import NotificationSettings from '../components/NotificationSettings/NotificationSettings';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { PasswordInput } from '../components/ui/password-input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { Label } from '../components/ui/label';
 import { Switch } from '../components/ui/switch';
 import { Card } from '../components/ui/card';
@@ -30,6 +32,7 @@ export default function SettingsPage() {
       {!user?.isAdmin && <NotificationSection />}
       <ThemeSection />
       <SignOutSection />
+      {!user?.isAdmin && <DangerSection />}
     </div>
   );
 }
@@ -172,9 +175,9 @@ function PasswordSection() {
     <Card className="p-5">
       <h2 className="font-semibold text-foreground mb-4">🔑 Password</h2>
       <form onSubmit={handleSubmit} className="space-y-3">
-        <Input type="password" placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-        <Input type="password" placeholder="New password (min 6 chars)" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
-        <Input type="password" placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <PasswordInput placeholder="Current password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <PasswordInput placeholder="New password (min 6 chars)" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+        <PasswordInput placeholder="Confirm new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={loading} className="w-full">{loading ? 'Changing...' : 'Change Password'}</Button>
       </form>
@@ -215,5 +218,51 @@ function SignOutSection() {
     <div className="pt-4">
       <Button variant="destructive" className="w-full" onClick={logout}>Sign Out</Button>
     </div>
+  );
+}
+
+function DangerSection() {
+  const { deleteAccount } = useAuth();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteAccount();
+      navigate('/');
+    } catch (err) {
+      notify.error("Couldn't delete account", err.message || 'Please try again.');
+      setDeleting(false);
+      setOpen(false);
+    }
+  };
+
+  return (
+    <Card className="p-5" style={{ borderColor: 'var(--danger-color)' }}>
+      <h2 className="font-semibold text-foreground mb-1">⚠️ Delete account</h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Permanently delete your account, habits, entries, reminders and backups. This can't be undone.
+      </p>
+      <Button variant="destructive" onClick={() => setOpen(true)}>Delete my account</Button>
+
+      <Dialog open={open} onOpenChange={(o) => { if (!deleting) setOpen(o); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete account?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes your account and all associated data. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={deleting}>Cancel</Button>
+            <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete forever'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
   );
 }

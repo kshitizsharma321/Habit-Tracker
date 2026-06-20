@@ -5,6 +5,9 @@ import { fetchDashboard } from '../api/habitDefinitionsApi';
 import { saveEntry } from '../api/entriesApi';
 
 import { getDateKey } from '../utils/dates';
+import { calculateStreaks, calculateStreaksFromGoal, fillMissingDays } from '../utils/stats';
+import { CELEBRATION_MILESTONES } from '../constants/milestones';
+import { celebrateMilestone } from '../lib/celebrate';
 import DynamicLogEntry from '../components/DynamicLogEntry/DynamicLogEntry';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -162,6 +165,24 @@ export default function TodayPage() {
     onError: (err, _vars, ctx) => {
       if (ctx?.previous) queryClient.setQueryData(['dashboard'], ctx.previous);
       notify.error("Couldn't save", err.message || 'Check your connection and try again.');
+    },
+    // Celebrate when a *today* log pushes a habit onto a streak milestone.
+    onSuccess: (_data, { habitId, date }) => {
+      const todayKey = getDateKey(new Date());
+      if (date !== todayKey) return; // ignore backdated edits
+      const def = definitions.find((d) => d._id === habitId);
+      if (!def) return;
+      const raw = queryClient.getQueryData(['dashboard'])?.allEntries?.[habitId] || {};
+      const entries = {};
+      for (const [d, v] of Object.entries(raw)) entries[d] = v && typeof v === 'object' ? v.value : v;
+      let streak = 0;
+      if (def.trackingType === 'completion') {
+        streak = calculateStreaks(fillMissingDays(entries)).currentStreak;
+      } else if (def.goal?.value) {
+        streak = calculateStreaksFromGoal(entries, def.goal.value, def.goal.direction).currentStreak;
+      }
+      const milestone = CELEBRATION_MILESTONES.find((m) => m === streak);
+      if (milestone) celebrateMilestone({ habitId, habitName: def.name, milestone });
     },
     // Mark the detail-page cache stale (it isn't mounted, so this won't trigger a refetch now).
     onSettled: (_d, _e, { habitId }) => {

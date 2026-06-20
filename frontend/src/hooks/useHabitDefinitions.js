@@ -7,7 +7,6 @@ import {
   deleteDefinition,
   bulkCreateDefinitions,
   reorderDefinitions,
-  applyTypeChange,
 } from '../api/habitDefinitionsApi';
 
 export function useHabitDefinitions() {
@@ -97,19 +96,6 @@ export function useHabitDefinitions() {
     },
   });
 
-  const typeChangeMutation = useMutation({
-    mutationFn: ({ id, data }) => applyTypeChange(id, data),
-    onSuccess: (result) => {
-      queryClient.setQueryData(['habit-definitions'], (old = []) =>
-        old.map((d) => (d._id === result.definition._id ? result.definition : d))
-      );
-      queryClient.invalidateQueries({ queryKey: ['habit-entries', result.definition._id] });
-      const n = result.changed;
-      notify.success('Tracking type changed', `${n} ${n === 1 ? 'entry was' : 'entries were'} converted.`);
-    },
-    onError: (err) => notify.error("Couldn't change type", err.message || 'Please try again.'),
-  });
-
   return {
     definitions,
     isLoading,
@@ -125,7 +111,5 @@ export function useHabitDefinitions() {
     isDeleting: deleteMutation.isPending,
     reorderHabits: reorderMutation.mutate,
     isReordering: reorderMutation.isPending,
-    changeType: typeChangeMutation.mutate,
-    isTypeChanging: typeChangeMutation.isPending,
   };
 }
