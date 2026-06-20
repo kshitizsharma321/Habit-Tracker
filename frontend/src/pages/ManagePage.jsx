@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -31,7 +31,7 @@ function DeleteDialog({ habit, isOpen, onClose, onConfirm, isDeleting }) {
 }
 
 export default function ManagePage() {
-  const { definitions, defsLoading, createHabit, isCreating, updateHabit, isUpdating, deleteHabit, isDeleting, changeType, isTypeChanging } = useOutletContext();
+  const { definitions, defsLoading, createHabit, isCreating, updateHabit, isUpdating, deleteHabit, isDeleting, reorderHabits, isReordering } = useOutletContext();
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') === 'add' ? 'add' : 'list');
   const [editingId, setEditingId] = useState(null);
@@ -39,14 +39,17 @@ export default function ManagePage() {
 
   const [form, setForm] = useState({
     name: '', trackingType: 'completion',
-    unit: '', goalEnabled: false, goalValue: 1,
+    unit: '', goalEnabled: false, goalValue: 1, goalDirection: 'at_least',
     color: '#22c55e', icon: '⭐',
   });
 
-  const editingDef = editingId ? definitions.find((d) => d._id === editingId) : null;
+  const existingNames = useMemo(
+    () => new Set(definitions.map((d) => d.name.trim().toLowerCase())),
+    [definitions],
+  );
 
   const resetForm = () => {
-    setForm({ name: '', trackingType: 'completion', unit: '', goalEnabled: false, goalValue: 1, color: '#22c55e', icon: '⭐' });
+    setForm({ name: '', trackingType: 'completion', unit: '', goalEnabled: false, goalValue: 1, goalDirection: 'at_least', color: '#22c55e', icon: '⭐' });
     setEditingId(null);
   };
 
@@ -55,6 +58,7 @@ export default function ManagePage() {
       name: def.name, trackingType: def.trackingType,
       unit: def.unit || '', goalEnabled: def.goal?.enabled || false,
       goalValue: def.goal?.value || 1,
+      goalDirection: def.goal?.direction || 'at_least',
       color: def.color || '#22c55e', icon: def.icon || '⭐',
     });
     setEditingId(def._id);
@@ -67,11 +71,27 @@ export default function ManagePage() {
       unit: tpl.unit || '',
       goalEnabled: tpl.type === 'quantity',
       goalValue: tpl.goal?.value || 1,
+      goalDirection: 'at_least',
       color: tpl.color || '#22c55e', icon: tpl.icon || '⭐',
     });
     setEditingId(null);
     setActiveTab('add');
   };
+
+  // Deep-link: /manage?edit=<id> opens that habit directly in the edit form (once).
+  const editHandledRef = useRef(false);
+  useEffect(() => {
+    if (editHandledRef.current) return;
+    const editId = searchParams.get('edit');
+    if (editId && definitions.length) {
+      const def = definitions.find((d) => d._id === editId);
+      if (def) {
+        startEdit(def);
+        editHandledRef.current = true;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, definitions]);
 
   const handleSave = async () => {
     const profile = {
@@ -79,23 +99,14 @@ export default function ManagePage() {
       unit: form.trackingType === 'quantity' ? form.unit : undefined,
     };
     if (form.trackingType === 'quantity') {
-      const goalVal = Math.max(0, parseFloat(form.goalValue) || 0);
-      profile.goal = { enabled: true, value: goalVal };
+      const goalVal = Math.round((parseFloat(form.goalValue) || 0) * 100) / 100;
+      if (goalVal <= 0) return; // guard — Save button is disabled, but never submit an invalid target
+      profile.goal = { enabled: true, value: goalVal, direction: form.goalDirection || 'at_least' };
     } else {
       profile.goal = { enabled: false, value: 1 };
     }
 
     if (editingId) {
-      if (form.trackingType !== editingDef.trackingType) {
-        changeType({
-          id: editingId,
-          data: { newType: form.trackingType, unit: form.unit },
-        });
-        updateHabit({ id: editingId, data: profile });
-        resetForm();
-        setActiveTab('list');
-        return;
-      }
       updateHabit({ id: editingId, data: profile });
       resetForm();
       setActiveTab('list');
@@ -117,11 +128,11 @@ export default function ManagePage() {
     setActiveTab(tab);
   };
 
-  const isSaving = isCreating || isUpdating || isTypeChanging;
+  const isSaving = isCreating || isUpdating;
 
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-bold text-foreground">Manage Habits</h1>
+      <h1 className="text-xl font-bold text-foreground">Habits</h1>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <TabsList className="w-full justify-start">
@@ -131,7 +142,7 @@ export default function ManagePage() {
         </TabsList>
 
         <TabsContent value="list">
-          <HabitList definitions={definitions} startEdit={startEdit} setDeleteTarget={setDeleteTarget} loading={defsLoading} />
+          <HabitList definitions={definitions} startEdit={startEdit} setDeleteTarget={setDeleteTarget} loading={defsLoading} reorderHabits={reorderHabits} isReordering={isReordering} />
         </TabsContent>
 
         <TabsContent value="add">
@@ -139,7 +150,11 @@ export default function ManagePage() {
         </TabsContent>
 
         <TabsContent value="templates">
-          <TemplateList applyTemplate={applyTemplate} />
+          <TemplateList
+            applyTemplate={applyTemplate}
+            existingNames={existingNames}
+            onAddCustom={() => { resetForm(); setActiveTab('add'); }}
+          />
         </TabsContent>
       </Tabs>
 

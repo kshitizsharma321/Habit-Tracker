@@ -63,9 +63,10 @@ router.post('/register', async (req, res) => {
     const existingByUsername = await User.findOne({ username: cleanUsername });
     if (existingByUsername) return res.status(409).json({ error: 'Username already taken' });
 
-    // Email: required for account recovery; auto-generate placeholder if omitted
-    const normalizedEmail = email ? validateEmail(email) : `${cleanUsername}@placeholder.local`;
+    // Email is optional — username is the universal identifier. No placeholder emails.
+    let normalizedEmail;
     if (email) {
+      normalizedEmail = validateEmail(email);
       const existingByEmail = await User.findOne({ email: normalizedEmail });
       if (existingByEmail) return res.status(409).json({ error: 'An account with this email already exists' });
     }

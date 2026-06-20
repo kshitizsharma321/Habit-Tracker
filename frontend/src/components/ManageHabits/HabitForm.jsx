@@ -7,9 +7,9 @@ import { COLORS } from '../../constants/habits';
 
 const EMOJI_GRID = [
   '🏋️','🏃','🚴','🤸','🧘','🚶','🏊','⛹️',
-  '💧','😴','🥗','💊','🦷','☀️','🍷','⏰',
-  '📚','📖','✍️','💻','🎯','🌍','📄','🎓',
-  '🧠','🙏','📵','📺','💰','🧍','🌳','🚿',
+  '💧','😴','🥗','💊','🦷','☀️','🥦','⏰',
+  '📚','📖','✍️','💻','🎯','🌍','📝','🎓',
+  '🧠','🙏','📵','📺','💰','📱','🌳','🚿',
   '💪','👟','❤️','⭐','🔥','🌿','✅','🎵',
 ];
 
@@ -65,7 +65,7 @@ function IconPicker({ value, onChange }) {
       <Input
         className="mt-2 w-24"
         maxLength={2}
-        placeholder="or type"
+        placeholder="Type emoji"
         value={custom}
         onChange={(e) => {
           setCustom(e.target.value);
@@ -77,11 +77,14 @@ function IconPicker({ value, onChange }) {
 }
 
 export default function HabitForm({ form, setForm, handleSave, isSaving, editingId, resetForm }) {
+  const goalNum = parseFloat(form.goalValue);
+  const isGoalValid = form.trackingType !== 'quantity' || (Number.isFinite(goalNum) && goalNum > 0);
+
   return (
     <div className="max-w-md space-y-4 mt-4">
       <div>
         <Label>Name</Label>
-        <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g., Exercise" />
+        <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Enter habit name" />
       </div>
 
       <div>
@@ -125,7 +128,7 @@ export default function HabitForm({ form, setForm, handleSave, isSaving, editing
       {form.trackingType === 'quantity' && (
         <div>
           <Label>Unit (optional)</Label>
-          <Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="hours, pages, km…" />
+          <Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="e.g. hours, km, pages" />
         </div>
       )}
 
@@ -134,19 +137,40 @@ export default function HabitForm({ form, setForm, handleSave, isSaving, editing
           <Label>Daily target</Label>
           <div className="flex gap-2 items-center">
             <Input
-              type="number" min="0" step="any"
+              type="number" min="0.01" step="0.01"
               value={form.goalValue}
               onChange={(e) => setForm({ ...form, goalValue: e.target.value })}
-              placeholder="e.g. 8"
-              className="w-28"
+              placeholder="Enter target (e.g. 8)"
+              className="w-44"
             />
             {form.unit && (
               <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>{form.unit}</span>
             )}
           </div>
+
+          <Label className="pt-1">How to count a streak day</Label>
+          <Select
+            value={form.goalDirection || 'at_least'}
+            onValueChange={(v) => setForm({ ...form, goalDirection: v })}
+          >
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="at_least">Reach at least the target (build up)</SelectItem>
+              <SelectItem value="at_most">Stay under the target (cut down)</SelectItem>
+            </SelectContent>
+          </Select>
+
           <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-            Log ≥ this value each time to count as a streak day.
+            {(form.goalDirection || 'at_least') === 'at_most'
+              ? 'Log ≤ this value each day to count as a streak day — good for cutting down screen time, spending, etc.'
+              : 'Log ≥ this value each day to count as a streak day.'}
           </p>
+
+          {!isGoalValid && (
+            <p className="text-xs" style={{ color: 'var(--danger-color)' }}>
+              Enter a target greater than 0.
+            </p>
+          )}
         </div>
       )}
 
@@ -161,7 +185,7 @@ export default function HabitForm({ form, setForm, handleSave, isSaving, editing
         </div>
       </div>
 
-      <Button onClick={handleSave} disabled={!form.name.trim() || isSaving} className="w-full">
+      <Button onClick={handleSave} disabled={!form.name.trim() || !isGoalValid || isSaving} className="w-full">
         {isSaving ? 'Saving...' : editingId ? 'Save Changes' : 'Create Habit'}
       </Button>
 

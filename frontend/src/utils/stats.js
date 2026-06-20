@@ -13,11 +13,9 @@ export {
   getAdvancedStats,
   getNumericStats,
   getNumericTrend,
-  getMovingAverage,
   getInsights,
   linearRegression,
-  forecast,
-  getStats,
   getTypeStats,
   calculateStreaksFromGoal,
+  isGoalMet,
 } from './stats/index';

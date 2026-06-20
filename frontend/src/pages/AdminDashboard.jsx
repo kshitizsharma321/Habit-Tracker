@@ -6,10 +6,11 @@ import {
   fetchAdminUsers,
   deleteAdminUser,
   fetchAdminUserHabits,
-  fetchAdminUserBackups,
+  fetchAdminUserBackup,
+  fetchOrphanedBackups,
   downloadUserBackup,
   restoreFromBackup,
-  restoreAdminData,
+  restoreFromUploadedCsv,
   generateUserBackup,
   deleteUserBackup,
 } from '../api/adminApi';
@@ -17,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -25,6 +27,26 @@ import {
   Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
 } from '../components/ui/select';
 import { notify } from '../lib/toast';
+
+const CSV_COLUMNS = [
+  { name: 'Username', required: false },
+  { name: 'Habit Name', required: true },
+  { name: 'Tracking Type', required: false },
+  { name: 'Unit', required: false },
+  { name: 'Color', required: false },
+  { name: 'Icon', required: false },
+  { name: 'Goal Enabled', required: false },
+  { name: 'Goal Value', required: false },
+  { name: 'Goal Direction', required: false },
+  { name: 'Date', required: true },
+  { name: 'Value', required: true },
+];
+
+const CSV_EXAMPLE_ROWS = [
+  ['@alice', 'Running', 'quantity', 'km', '#f97316', '🏃', 'true', '5', 'at_least', '2026-06-01', '4'],
+  ['@alice', 'Screen Time', 'quantity', 'hours', '#ef4444', '📱', 'true', '2', 'at_most', '2026-06-01', '1.5'],
+  ['@alice', 'Exercise', 'completion', '', '#22c55e', '🏋️', 'false', '', '', '2026-06-01', 'yes'],
+];
 
 // ── Generic confirm modal ─────────────────────────────────────────────────────
 function ConfirmDialog({ open, title, description, confirmLabel = 'Confirm', variant = 'destructive', onConfirm, onClose, isPending }) {
@@ -118,7 +140,7 @@ function UserRow({ u, currentUserId, onDelete }) {
             </div>
           </button>
         </td>
-        <td className="py-3 pr-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
+        <td className="py-3 pr-4 text-sm" style={{ color: 'var(--text-secondary)' }}>{u.email || '—'}</td>
         <td className="py-3 pr-4 text-xs" style={{ color: 'var(--text-secondary)' }}>
           {new Date(u.createdAt).toLocaleDateString()}
         </td>
@@ -174,8 +196,11 @@ export default function AdminDashboard() {
   const queryClient = useQueryClient();
 
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [restoreTarget, setRestoreTarget] = useState(null); // { date, userId, label }
-  const [deleteBackupTarget, setDeleteBackupTarget] = useState(null); // { date, userId, label }
+  const [restoreTarget, setRestoreTarget] = useState(null); // { userId, label }
+  const [deleteBackupTarget, setDeleteBackupTarget] = useState(null); // { userId, label }
+  const [orphanTarget, setOrphanTarget] = useState(null); // { userId, username } — recover deleted account
+  const [orphanPassword, setOrphanPassword] = useState('');
+  const [csvPassword, setCsvPassword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
   const [csvFile, setCsvFile] = useState(null);
   const [csvPreview, setCsvPreview] = useState(null); // { text, rows, grouped }
@@ -196,18 +221,27 @@ export default function AdminDashboard() {
     queryFn: fetchAdminUsers,
     enabled: isAdmin,
   });
-  const { data: userBackups = [], isLoading: backupsLoading } = useQuery({
-    queryKey: ['admin-user-backups', selectedUserId],
-    queryFn: () => fetchAdminUserBackups(selectedUserId),
+  const { data: userBackup, isLoading: backupLoading } = useQuery({
+    queryKey: ['admin-user-backup', selectedUserId],
+    queryFn: () => fetchAdminUserBackup(selectedUserId),
     enabled: isAdmin && !!selectedUserId,
+  });
+  const { data: orphanedBackups = [] } = useQuery({
+    queryKey: ['admin-orphaned-backups'],
+    queryFn: fetchOrphanedBackups,
+    enabled: isAdmin,
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteAdminUser,
-    onSuccess: () => {
+    onSuccess: (_, deletedId) => {
+      // If the deleted user was selected in the Backup tab, clear the selection
+      if (selectedUserId === deletedId) setSelectedUserId('');
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backup', deletedId] });
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      notify.success('User deleted', 'Their habits, entries, and backups were removed.');
+      queryClient.invalidateQueries({ queryKey: ['admin-orphaned-backups'] });
+      notify.success('User deleted', 'Their habits and entries were removed — their backup was kept for recovery.');
       setDeleteTarget(null);
     },
     onError: (err) => { notify.error("Couldn't delete user", err.message); setDeleteTarget(null); },
@@ -215,21 +249,31 @@ export default function AdminDashboard() {
 
   const restoreMutation = useMutation({
     mutationFn: restoreFromBackup,
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      notify.success('Backup restored', `${res.restored} entries restored${res.errors ? ` · ${res.errors} skipped` : ''}.`);
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-orphaned-backups'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backup', variables.userId] });
+      const recreated = res.recreated ? ' · account recreated' : '';
+      notify.success('Backup restored', `${res.restored} entries restored${res.errors ? ` · ${res.errors} skipped` : ''}${recreated}.`);
       setRestoreTarget(null);
+      setOrphanTarget(null);
+      setOrphanPassword('');
     },
-    onError: (err) => { notify.error('Restore failed', err.message); setRestoreTarget(null); },
+    onError: (err) => notify.error('Restore failed', err.message),
   });
 
   const csvRestoreMutation = useMutation({
-    mutationFn: restoreAdminData,
+    mutationFn: ({ csvText, password }) => restoreFromUploadedCsv(csvText, password),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      notify.success('Import complete', `${res.restored} entries imported${res.errors ? ` · ${res.errors} skipped` : ''}.`);
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-orphaned-backups'] });
+      const recreated = res.recreated ? ` · ${res.recreated} account(s) recreated` : '';
+      notify.success('Import complete', `${res.restored} entries imported${res.errors ? ` · ${res.errors} skipped` : ''}${recreated}.`);
       setCsvFile(null);
       setCsvPreview(null);
+      setCsvPassword('');
     },
     onError: (err) => notify.error('Import failed', err.message),
   });
@@ -237,17 +281,18 @@ export default function AdminDashboard() {
   const generateBackupMutation = useMutation({
     mutationFn: generateUserBackup,
     onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backup', selectedUserId] });
       notify.success('Backup generated', `${res.date} · ${res.entryCount} ${res.entryCount === 1 ? 'entry' : 'entries'} saved.`);
     },
     onError: (err) => notify.error("Couldn't generate backup", err.message || 'Please try again.'),
   });
 
   const deleteBackupMutation = useMutation({
-    mutationFn: ({ userId, date }) => deleteUserBackup(userId, date),
+    mutationFn: ({ userId }) => deleteUserBackup(userId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-user-backups', selectedUserId] });
-      notify.success('Backup deleted', 'The snapshot was removed.');
+      queryClient.invalidateQueries({ queryKey: ['admin-user-backup', selectedUserId] });
+      queryClient.invalidateQueries({ queryKey: ['admin-orphaned-backups'] });
+      notify.success('Backup deleted', 'The backup was removed.');
       setDeleteBackupTarget(null);
     },
     onError: (err) => { notify.error("Couldn't delete backup", err.message || 'Please try again.'); setDeleteBackupTarget(null); },
@@ -260,7 +305,7 @@ export default function AdminDashboard() {
         queryClient.refetchQueries({ queryKey: ['admin-stats'] }),
         queryClient.refetchQueries({ queryKey: ['admin-users'] }),
         selectedUserId
-          ? queryClient.refetchQueries({ queryKey: ['admin-user-backups', selectedUserId] })
+          ? queryClient.refetchQueries({ queryKey: ['admin-user-backup', selectedUserId] })
           : Promise.resolve(),
       ]);
       notify.success('Data refreshed', 'Showing the latest numbers.');
@@ -276,10 +321,10 @@ export default function AdminDashboard() {
   const selectedUser = users.find((u) => u._id === selectedUserId);
 
   // Download a backup via Supabase signed URL
-  const handleDownload = async (userId, date) => {
+  const handleDownload = async (userId) => {
     setIsDownloading(true);
     try {
-      const { signedUrl } = await downloadUserBackup(userId, date);
+      const { signedUrl } = await downloadUserBackup(userId);
       const a = document.createElement('a');
       a.href = signedUrl;
       a.target = '_blank';
@@ -330,7 +375,7 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 space-y-6">
+    <div className="max-w-4xl mx-auto p-3 sm:p-4 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-2xl">🛡️</span>
@@ -349,7 +394,7 @@ export default function AdminDashboard() {
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList className="mb-4">
+        <TabsList className="mb-4 flex-wrap h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="backups">Backup & Restore</TabsTrigger>
@@ -358,7 +403,7 @@ export default function AdminDashboard() {
 
         {/* ── Overview ──────────────────────────────────────────────── */}
         <TabsContent value="overview">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[
               { label: 'End Users', value: stats?.users ?? '—', icon: '👥', note: 'Admin excluded' },
               { label: 'Active Habits', value: stats?.habits ?? '—', icon: '📋', note: 'Across all users' },
@@ -381,12 +426,12 @@ export default function AdminDashboard() {
             <h3 className="font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>ℹ️ How backups work</h3>
             <ul className="text-sm space-y-2" style={{ color: 'var(--text-secondary)' }}>
               <li>• Backup cron runs every night at <strong>23:55 IST</strong></li>
-              <li>• One CSV file is generated <strong>per user</strong> covering all their habits and all entries</li>
+              <li>• Each user has <strong>one backup</strong> — a single CSV covering all their habits and entries</li>
+              <li>• Every run (cron or manual) <strong>overwrites</strong> that one backup, so there's always exactly one latest per user — they never pile up</li>
               <li>• CSV files are stored in <strong>Supabase Storage</strong> (private bucket); MongoDB keeps only the file reference</li>
               <li>• Downloads use a short-lived signed link, so backups stay private</li>
-              <li>• To restore: go to <strong>Backup & Restore</strong>, select a user, pick a date, download or restore</li>
-              <li>• To import manually: go to <strong>CSV Upload</strong> and drop the backup file</li>
-              <li>• CSV format: <code className="px-1 rounded text-xs" style={{ background: 'var(--bg-secondary)' }}>Username, Habit Name, Tracking Type, Unit, Color, Icon, Goal Enabled, Goal Value, Date, Value</code></li>
+              <li>• To restore: go to <strong>Backup & Restore</strong>, select a user, then download or restore</li>
+              <li>• To import manually: go to <strong>CSV Upload</strong> and drop the backup file (format shown there)</li>
             </ul>
           </Card>
         </TabsContent>
@@ -434,9 +479,8 @@ export default function AdminDashboard() {
                 🗄️ Backup & Restore
               </h3>
               <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                Select a user to see their backup snapshots. You can download the CSV file or
-                restore directly from a stored snapshot. Restoring <strong>overwrites</strong> existing
-                entries for matching dates.
+                Select a user to see their latest backup. You can download the CSV or restore
+                directly from it. Restoring <strong>overwrites</strong> existing entries for matching dates.
               </p>
             </div>
 
@@ -445,27 +489,35 @@ export default function AdminDashboard() {
               <p className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--text-secondary)' }}>
                 Step 1 — Select a user
               </p>
-              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="— Choose a user —" />
-                </SelectTrigger>
-                <SelectContent>
-                  {users.map((u) => (
-                    <SelectItem key={u._id} value={u._id}>
-                      {u.username ? `@${u.username}` : u.email}
-                      {u.name ? ` (${u.name})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {!usersLoading && users.length === 0 ? (
+                <p className="text-sm py-2" style={{ color: 'var(--text-secondary)' }}>
+                  No end users yet — backups will appear here once users sign up.
+                </p>
+              ) : (
+                <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="— Choose a user —" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users.map((u) => (
+                      <SelectItem key={u._id} value={u._id}>
+                        {u.username ? `@${u.username}` : u.email}
+                        {u.name ? ` (${u.name})` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
-            {/* Step 2 — pick backup date */}
-            {selectedUserId && (
+            {/* Step 2 — the user's single latest backup */}
+            {selectedUserId && (() => {
+              const label = selectedUser?.username ? `@${selectedUser.username}` : selectedUser?.email;
+              return (
               <div>
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                   <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
-                    Step 2 — Select a backup snapshot
+                    Step 2 — Latest backup
                   </p>
                   <Button
                     size="sm"
@@ -477,66 +529,92 @@ export default function AdminDashboard() {
                   </Button>
                 </div>
 
-                {backupsLoading ? (
-                  <div className="space-y-2">
-                    {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
-                  </div>
-                ) : userBackups.length === 0 ? (
+                {backupLoading ? (
+                  <Skeleton className="h-20 w-full rounded-xl" />
+                ) : !userBackup ? (
                   <div
                     className="rounded-xl p-4 text-sm"
                     style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
                   >
-                    No backups found for {selectedUser?.username ? `@${selectedUser.username}` : selectedUser?.email}.
-                    Backups are created automatically each night at 23:55 IST once the user has logged at least one entry.
+                    No backup yet for {label}. One is created automatically each night at 23:55 IST once the
+                    user has logged an entry — or click <strong>Generate Now</strong>.
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {userBackups.map((b) => {
-                      const label = selectedUser?.username ? `@${selectedUser.username}` : selectedUser?.email;
-                      return (
-                        <div
-                          key={b.date}
-                          className="flex items-center justify-between rounded-xl p-3 gap-3"
-                          style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
-                        >
-                          <div>
-                            <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{b.date}</p>
-                            <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                              {b.habitCount} habit{b.habitCount !== 1 ? 's' : ''}
-                              {b.entryCount ? ` · ${b.entryCount} entries` : ''}
-                            </p>
-                          </div>
-                          <div className="flex gap-2 shrink-0">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isDownloading}
-                              onClick={() => handleDownload(selectedUserId, b.date)}
-                            >
-                              ⬇️ Download
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={restoreMutation.isPending}
-                              onClick={() => setRestoreTarget({ date: b.date, userId: selectedUserId, label })}
-                            >
-                              Restore
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              disabled={deleteBackupMutation.isPending}
-                              onClick={() => setDeleteBackupTarget({ date: b.date, userId: selectedUserId, label })}
-                            >
-                              🗑️
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div
+                    className="flex items-center justify-between rounded-xl p-3 gap-3 flex-wrap"
+                    style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
+                  >
+                    <div>
+                      <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+                        Snapshot from {userBackup.date}
+                      </p>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                        {userBackup.habitCount} habit{userBackup.habitCount !== 1 ? 's' : ''}
+                        {userBackup.entryCount ? ` · ${userBackup.entryCount} entries` : ''}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <Button size="sm" variant="outline" disabled={isDownloading}
+                        onClick={() => handleDownload(selectedUserId)}>
+                        ⬇️ Download
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={restoreMutation.isPending}
+                        onClick={() => setRestoreTarget({ userId: selectedUserId, label })}>
+                        Restore
+                      </Button>
+                      <Button size="sm" variant="destructive" disabled={deleteBackupMutation.isPending}
+                        onClick={() => setDeleteBackupTarget({ userId: selectedUserId, label })}>
+                        🗑️
+                      </Button>
+                    </div>
                   </div>
                 )}
+              </div>
+              );
+            })()}
+
+            {/* Orphaned backups — deleted accounts that can be recovered */}
+            {orphanedBackups.length > 0 && (
+              <div className="pt-3 border-t" style={{ borderColor: 'var(--border-color)' }}>
+                <p className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-secondary)' }}>
+                  ♻️ Orphaned backups — deleted accounts ({orphanedBackups.length})
+                </p>
+                <p className="text-xs mb-2.5" style={{ color: 'var(--text-secondary)' }}>
+                  These users were deleted but their backup was kept. <strong>Recover</strong> recreates the account (you set a temporary password) and restores all habits + entries.
+                </p>
+                <div className="space-y-2">
+                  {orphanedBackups.map((b) => (
+                    <div
+                      key={b._id}
+                      className="flex items-center justify-between rounded-xl p-3 gap-3 flex-wrap"
+                      style={{ background: 'var(--bg-secondary)', border: '1px solid color-mix(in srgb, var(--danger-color) 30%, var(--border-color))' }}
+                    >
+                      <div>
+                        <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+                          @{b.username || 'unknown'} <span className="font-normal" style={{ color: 'var(--text-secondary)' }}>(deleted)</span>
+                        </p>
+                        <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                          {b.date} · {b.habitCount} habit{b.habitCount !== 1 ? 's' : ''}
+                          {b.entryCount ? ` · ${b.entryCount} entries` : ''}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <Button size="sm" variant="outline" disabled={isDownloading}
+                          onClick={() => handleDownload(b.userId)}>
+                          ⬇️ Download
+                        </Button>
+                        <Button size="sm" disabled={restoreMutation.isPending}
+                          onClick={() => { setOrphanPassword(''); setOrphanTarget({ userId: b.userId, username: b.username }); }}>
+                          ♻️ Recover
+                        </Button>
+                        <Button size="sm" variant="destructive" disabled={deleteBackupMutation.isPending}
+                          onClick={() => setDeleteBackupTarget({ userId: b.userId, label: `@${b.username || 'unknown'}` })}>
+                          🗑️
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </Card>
@@ -555,23 +633,52 @@ export default function AdminDashboard() {
               </p>
             </div>
 
-            {/* Format reference */}
+            {/* Format reference — table */}
             <div
-              className="rounded-xl p-4 text-xs space-y-1.5"
-              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}
+              className="rounded-xl p-4"
+              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}
             >
-              <p className="font-semibold text-sm mb-2" style={{ color: 'var(--text-primary)' }}>Expected CSV format</p>
-              <p><strong>Required columns:</strong> Habit Name, Date (YYYY-MM-DD), Value</p>
-              <p><strong>Optional columns:</strong> Username, Tracking Type, Unit, Color, Icon, Goal Enabled, Goal Value</p>
-              <p className="mt-2 font-mono break-all" style={{ color: 'var(--text-primary)' }}>
-                Username,Habit Name,Tracking Type,Unit,Color,Icon,Goal Enabled,Goal Value,Date,Value
+              <p className="font-semibold text-sm mb-3" style={{ color: 'var(--text-primary)' }}>Expected CSV format</p>
+              <div className="overflow-x-auto -mx-1 px-1">
+                <table className="w-full text-xs border-collapse" style={{ color: 'var(--text-secondary)' }}>
+                  <thead>
+                    <tr>
+                      {CSV_COLUMNS.map((c) => (
+                        <th
+                          key={c.name}
+                          className="text-left font-semibold whitespace-nowrap px-2 py-1.5 border-b"
+                          style={{ color: 'var(--text-primary)', borderColor: 'var(--border-color)' }}
+                        >
+                          {c.name}
+                          <span
+                            className="ml-1 font-normal"
+                            style={{ color: c.required ? 'var(--danger-color)' : 'var(--text-secondary)', opacity: c.required ? 1 : 0.7 }}
+                          >
+                            {c.required ? '*' : '(opt)'}
+                          </span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="font-mono">
+                    {CSV_EXAMPLE_ROWS.map((row, i) => (
+                      <tr key={i}>
+                        {row.map((cell, j) => (
+                          <td key={j} className="whitespace-nowrap px-2 py-1 border-b" style={{ borderColor: 'var(--border-color)' }}>
+                            {cell || <span style={{ opacity: 0.4 }}>—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs mt-3" style={{ color: 'var(--text-secondary)' }}>
+                <span style={{ color: 'var(--danger-color)' }}>*</span> required · Date format <strong>YYYY-MM-DD</strong> ·
+                Value is <strong>yes</strong>/<strong>no</strong> for completion habits, or a <strong>number</strong> for quantity.
               </p>
-              <p className="font-mono">@alice,Running,quantity,km,#f97316,🏃,true,5,2026-06-01,4</p>
-              <p className="font-mono">@alice,Water,quantity,glasses,#06b6d4,💧,true,8,2026-06-01,7</p>
-              <p className="font-mono">@alice,Exercise,completion,,#22c55e,🏋️,false,,2026-06-01,yes</p>
-              <p className="mt-2">
-                💡 The easiest way to get a correctly formatted file is to download a backup from
-                the <strong>Backup & Restore</strong> tab and re-upload it here.
+              <p className="text-xs mt-1.5" style={{ color: 'var(--text-secondary)' }}>
+                💡 Easiest: download a backup from <strong>Backup &amp; Restore</strong> and re-upload it here.
               </p>
             </div>
 
@@ -596,8 +703,24 @@ export default function AdminDashboard() {
               </div>
             )}
 
+            <div>
+              <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                Password for recreated accounts (optional)
+              </label>
+              <Input
+                type="text"
+                value={csvPassword}
+                onChange={(e) => setCsvPassword(e.target.value)}
+                placeholder="Min 6 chars — only used if the CSV's user was deleted"
+                className="mt-1"
+              />
+              <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                If a username in the CSV no longer exists, it's recreated with this password (the user can change it later). Leave blank to skip missing users.
+              </p>
+            </div>
+
             <Button
-              onClick={() => csvRestoreMutation.mutate(csvPreview.text)}
+              onClick={() => csvRestoreMutation.mutate({ csvText: csvPreview.text, password: csvPassword || undefined })}
               disabled={!csvPreview || csvRestoreMutation.isPending}
             >
               {csvRestoreMutation.isPending ? 'Importing…' : '⬆️ Import & Restore'}
@@ -612,7 +735,7 @@ export default function AdminDashboard() {
         title="Delete user?"
         description={
           deleteTarget
-            ? `This will permanently delete ${deleteTarget.username ? `@${deleteTarget.username}` : deleteTarget.email} and all their habits, entries, and backups. This cannot be undone.`
+            ? `This will permanently remove @${deleteTarget.username || deleteTarget.email} — all their habits and entries will be deleted. Their backup is preserved and will appear under "Orphaned backups" so you can recover the account if needed.`
             : ''
         }
         confirmLabel="Delete"
@@ -628,12 +751,12 @@ export default function AdminDashboard() {
         title="Restore backup?"
         description={
           restoreTarget
-            ? `Restore all habits for ${restoreTarget.label} from the ${restoreTarget.date} snapshot. Entries for matching dates will be overwritten.`
+            ? `Restore all habits for ${restoreTarget.label} from their latest backup. Entries for matching dates will be overwritten.`
             : ''
         }
         confirmLabel="Restore"
         variant="default"
-        onConfirm={() => restoreMutation.mutate({ date: restoreTarget.date, userId: restoreTarget.userId })}
+        onConfirm={() => restoreMutation.mutate({ userId: restoreTarget.userId })}
         onClose={() => setRestoreTarget(null)}
         isPending={restoreMutation.isPending}
       />
@@ -644,15 +767,45 @@ export default function AdminDashboard() {
         title="Delete backup?"
         description={
           deleteBackupTarget
-            ? `Permanently delete the ${deleteBackupTarget.date} backup for ${deleteBackupTarget.label}. This cannot be undone.`
+            ? `Permanently delete the backup for ${deleteBackupTarget.label}. This cannot be undone.`
             : ''
         }
         confirmLabel="Delete"
         variant="destructive"
-        onConfirm={() => deleteBackupMutation.mutate({ userId: deleteBackupTarget.userId, date: deleteBackupTarget.date })}
+        onConfirm={() => deleteBackupMutation.mutate({ userId: deleteBackupTarget.userId })}
         onClose={() => setDeleteBackupTarget(null)}
         isPending={deleteBackupMutation.isPending}
       />
+
+      {/* Recover a deleted account from its orphaned backup */}
+      <Dialog open={!!orphanTarget} onOpenChange={(v) => { if (!v && !restoreMutation.isPending) setOrphanTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Recover @{orphanTarget?.username || 'account'}?</DialogTitle>
+            <DialogDescription>
+              This recreates the deleted account and restores all its habits and entries from the backup.
+              Set a temporary password — the user can change it after signing in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-2">
+            <Input
+              type="text"
+              value={orphanPassword}
+              onChange={(e) => setOrphanPassword(e.target.value)}
+              placeholder="Temporary password (min 6 chars)"
+            />
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setOrphanTarget(null)} disabled={restoreMutation.isPending}>Cancel</Button>
+            <Button
+              onClick={() => restoreMutation.mutate({ userId: orphanTarget.userId, newUserPassword: orphanPassword })}
+              disabled={restoreMutation.isPending || orphanPassword.length < 6}
+            >
+              {restoreMutation.isPending ? 'Recovering…' : 'Recover account'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

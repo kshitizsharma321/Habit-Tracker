@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useOnboarding } from './hooks/useOnboarding';
 import Layout from './components/Layout';
 import TodayPage from './pages/TodayPage';
+import DashboardPage from './pages/DashboardPage';
 import HabitDetailPage from './pages/HabitDetailPage';
 import ManagePage from './pages/ManagePage';
 import SettingsPage from './pages/SettingsPage';
@@ -68,6 +69,7 @@ export default function App() {
 
               <Route element={<AuthGate><OnboardingGate /></AuthGate>}>
                 <Route index element={<TodayPage />} />
+                <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="detail" element={<HabitDetailPage />} />
                 <Route path="manage" element={<ManagePage />} />
                 <Route path="settings" element={<SettingsPage />} />

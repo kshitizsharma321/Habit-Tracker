@@ -1,5 +1,6 @@
 import { getDateKey, parseStoredDate } from '../dates';
 import { getSortedKeys, wilsonScore, ewma } from './shared';
+import { isGoalMet } from './numeric';
 
 export function calculateStreaks(data) {
   const keys = getSortedKeys(data);
@@ -38,10 +39,10 @@ export function calculateStreaks(data) {
   return { currentStreak, longestStreak };
 }
 
-export function calculateStreaksFromGoal(entries, goalValue) {
+export function calculateStreaksFromGoal(entries, goalValue, direction = 'at_least') {
   const binaryEntries = {};
   for (const [date, value] of Object.entries(entries)) {
-    binaryEntries[date] = typeof value === 'number' && value >= goalValue ? 'yes' : 'no';
+    binaryEntries[date] = isGoalMet(value, goalValue, direction) ? 'yes' : 'no';
   }
   return calculateStreaks(binaryEntries);
 }

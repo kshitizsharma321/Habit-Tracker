@@ -154,6 +154,11 @@ function _goalInsight(entries, name, goal, trackingType) {
   const todayKey = getDateKey(new Date());
   const val = entries?.[todayKey];
   if (typeof val !== 'number') return null;
+  const direction = goal.direction || 'at_least';
+  if (direction === 'at_most') {
+    if (val <= goal.value) return `✅ Under your "${name}" limit today! (${val}/${goal.value})`;
+    return `⚠️ ${val}/${goal.value} — over today's "${name}" limit`;
+  }
   if (val >= goal.value) return `✅ Goal met for "${name}"! (${val}/${goal.value})`;
   const percent = Math.round((val / goal.value) * 100);
   return `🎯 ${val}/${goal.value} (${percent}%) toward today's "${name}" goal`;
