@@ -75,7 +75,10 @@ function ProfileSection() {
     if (usernameStatus === 'taken' || usernameStatus === 'checking' || usernameStatus === 'empty' || usernameStatus === 'min') return;
     setLoading(true);
     try {
-      const updates = { name, email };
+      const updates = { name };
+      // Only send email when it actually changed; empty string → null (clears it)
+      const currentEmail = user?.email || '';
+      if (email !== currentEmail) updates.email = email.trim() || null;
       if (username.trim() && username.trim() !== user?.username) updates.username = username.trim();
       await updateUser(updates);
       notify.success('Profile updated', 'Your changes have been saved.');
