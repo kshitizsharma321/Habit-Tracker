@@ -109,7 +109,9 @@ router.post('/ai-digest', requireAuth, aiLimiter, async (req, res) => {
     }
 
     const summary = buildAccountSummary(definitions, rowsByHabit, dateKey);
-    if (summary.habits.every((h) => h.totalDaysLogged < 3)) return res.json({ text: null });
+    // Gate on real entries (daysLogged), not the gap-filled span — three
+    // calendar days with one entry isn't enough data to write about.
+    if (summary.habits.every((h) => h.daysLogged < 3)) return res.json({ text: null });
 
     // The digest names today's progress ("2 of 5 done"), so it must be keyed on
     // that progress — not just the date. Otherwise the morning's "nothing logged

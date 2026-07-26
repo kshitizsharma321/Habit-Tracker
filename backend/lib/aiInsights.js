@@ -2,7 +2,7 @@
 // callers must treat null (unconfigured / quota / error) as "show nothing"
 // and fall back to the rule-based insights.
 
-const { calculateCurrentStreak, isSuccess } = require('./streaks');
+const { calculateCurrentStreak, calculateHabitStats } = require('./streaks');
 
 const SYSTEM_PROMPT = `You are a concise, encouraging habit coach inside a habit-tracking app.
 Rules:
@@ -10,6 +10,7 @@ Rules:
 - Reference the user's actual numbers (streak, averages, rates) — be specific, not generic.
 - If goal.direction is "at_most" this is a REDUCTION habit (e.g. screen time): LOWER values are success. Never praise an increase for these.
 - If goal.direction is "at_least", higher/consistent values are success.
+- When referring to how long they've been at it, use daysTracked (the number the app shows as "Days Tracked"), NOT daysLogged. successRatePercent is already calculated over daysTracked — quote it as given, never recompute it.
 - Be warm and motivating but honest — if the data slipped, say so kindly with one concrete suggestion.`;
 
 const DIGEST_PROMPT = `You are a concise, encouraging habit coach writing ONE short daily summary of a user's whole habit dashboard.
@@ -17,6 +18,7 @@ Rules:
 - Reply with 2-4 sentences of plain text. No markdown, no lists, no greetings.
 - Mention 2-3 habits BY NAME with their actual numbers — celebrate the strongest, gently nudge the weakest.
 - If a habit's goal.direction is "at_most" it is a REDUCTION habit: LOWER values are success. Never praise an increase for these.
+- Quote successRatePercent and daysTracked exactly as given — they match the numbers on the user's dashboard. Never recompute a rate from other fields.
 - Be warm and specific, never generic filler.`;
 
 function isAiConfigured() {
@@ -32,7 +34,9 @@ function buildHabitSummary(definition, rows) {
   const dates = Object.keys(entryMap).sort();
   const values = dates.map((d) => entryMap[d]);
   const numeric = values.filter((v) => typeof v === 'number');
-  const successDays = dates.filter((d) => isSuccess(definition, entryMap[d])).length;
+  // Shared with the dashboard and the Detail page — never recompute these here,
+  // or the coach quotes different figures than the cards the user is looking at.
+  const { daysTracked, daysLogged, successRatePercent } = calculateHabitStats(entryMap, definition);
 
   const summary = {
     habitName: definition.name,
@@ -42,8 +46,9 @@ function buildHabitSummary(definition, rows) {
       ? { value: definition.goal.value, direction: definition.goal.direction }
       : null,
     currentStreak: calculateCurrentStreak(entryMap, definition),
-    totalDaysLogged: dates.length,
-    successRatePercent: dates.length ? Math.round((successDays / dates.length) * 100) : 0,
+    daysTracked,
+    daysLogged,
+    successRatePercent,
     // Last 14 raw entries let the model spot short-term patterns.
     recentEntries: dates.slice(-14).map((d) => ({ date: d, value: entryMap[d] })),
   };
@@ -64,16 +69,17 @@ function buildAccountSummary(definitions, rowsByHabit, todayKey) {
     const rows = rowsByHabit.get(String(def._id)) ?? [];
     const entryMap = {};
     for (const r of rows) entryMap[r.date] = r.value;
-    const dates = Object.keys(entryMap);
-    const successDays = dates.filter((d) => isSuccess(def, entryMap[d])).length;
+    // Same shared helper as the per-habit note and the dashboard cards.
+    const { daysTracked, daysLogged, successRatePercent } = calculateHabitStats(entryMap, def);
     const habit = {
       name: def.name,
       trackingType: def.trackingType,
       unit: def.unit || null,
       goal: def.goal?.enabled ? { value: def.goal.value, direction: def.goal.direction } : null,
       currentStreak: calculateCurrentStreak(entryMap, def),
-      totalDaysLogged: dates.length,
-      successRatePercent: dates.length ? Math.round((successDays / dates.length) * 100) : 0,
+      daysTracked,
+      daysLogged,
+      successRatePercent,
       loggedToday: entryMap[todayKey] !== undefined,
       todayValue: entryMap[todayKey] ?? null,
     };

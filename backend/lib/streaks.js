@@ -29,44 +29,61 @@ function calculateCurrentStreak(entryMap, definition) {
   return streak;
 }
 
-// All-time success rate, mirroring the frontend exactly so the Dashboard and the
-// Detail page can never disagree. The Dashboard only receives a 60-day entry
-// window, so computing this client-side there silently produced a "last 60 days"
-// number while Detail (which fetches full history) showed the all-time one.
+// THE single definition of "days tracked" and "success rate", mirroring
+// frontend/src/utils/stats exactly. Every surface — dashboard, detail page, AI
+// prompts — must use this, or the same habit reports different numbers in
+// different places (which is precisely what happened: the AI summary divided by
+// raw logged days while the UI divided by the gap-filled calendar span, so a
+// habit showing "37 days tracked · 81%" was described by the coach as
+// "34 logged days" at an inflated rate).
 //
-// Semantics per type, matching frontend/src/utils/stats:
-//  - completion: gaps between the first entry and today count as misses
-//    (fillMissingDays), today excluded while unlogged — a day you haven't
-//    reached yet isn't a failure.
-//  - quantity: only logged days count; unlogged days are not misses.
-function calculateSuccessRate(entryMap, definition) {
+// Semantics per type:
+//  - completion: every calendar day from the first entry to today counts, so a
+//    skipped day is a miss (mirrors fillMissingDays). An unlogged TODAY is
+//    excluded — a day you haven't finished yet isn't a failure.
+//  - quantity: only logged days count; gaps are not misses (the frontend does
+//    not gap-fill quantity habits either).
+function calculateHabitStats(entryMap, definition) {
   const dates = Object.keys(entryMap).sort();
-  if (dates.length === 0) return 0;
+  const daysLogged = dates.length;
+  if (daysLogged === 0) return { daysTracked: 0, daysLogged: 0, successDays: 0, successRatePercent: 0 };
 
   const todayKey = getISTDateKey();
 
   if (definition.trackingType !== 'completion') {
     const values = Object.values(entryMap).filter((v) => typeof v === 'number');
-    if (!values.length) return 0;
-    const met = values.filter((v) => isSuccess(definition, v)).length;
-    return Math.round((met / values.length) * 100);
+    const successDays = values.filter((v) => isSuccess(definition, v)).length;
+    return {
+      daysTracked: values.length,
+      daysLogged,
+      successDays,
+      successRatePercent: values.length ? Math.round((successDays / values.length) * 100) : 0,
+    };
   }
 
-  let total = 0;
-  let successes = 0;
+  let daysTracked = 0;
+  let successDays = 0;
   const cursor = new Date(`${dates[0]}T00:00:00.000Z`);
   const end = new Date(`${todayKey}T00:00:00.000Z`);
   while (cursor <= end) {
     const key = cursor.toISOString().slice(0, 10);
     const value = entryMap[key];
-    // An unlogged today is pending, not a miss (mirrors fillMissingDays).
     if (!(key === todayKey && value === undefined)) {
-      total++;
-      if (isSuccess(definition, value)) successes++;
+      daysTracked++;
+      if (isSuccess(definition, value)) successDays++;
     }
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
-  return total ? Math.round((successes / total) * 100) : 0;
+  return {
+    daysTracked,
+    daysLogged,
+    successDays,
+    successRatePercent: daysTracked ? Math.round((successDays / daysTracked) * 100) : 0,
+  };
 }
 
-module.exports = { calculateCurrentStreak, isSuccess, calculateSuccessRate };
+function calculateSuccessRate(entryMap, definition) {
+  return calculateHabitStats(entryMap, definition).successRatePercent;
+}
+
+module.exports = { calculateCurrentStreak, isSuccess, calculateSuccessRate, calculateHabitStats };
