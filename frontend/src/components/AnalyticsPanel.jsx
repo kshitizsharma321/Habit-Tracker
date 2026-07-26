@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
+import TrendChart from './TrendChart';
 import { parseStoredDate } from '../utils/dates';
 import { getSortedKeys } from '../utils/stats/shared';
 import { getAdvancedStats, getWeekData, getMonthData } from '../utils/stats/binary';
-import { getNumericStats, getNumericTrend, getWeekNumericData, getCoefficientOfVariation } from '../utils/stats/numeric';
+import { getNumericStats, getNumericTrend, getWeekNumericData, getCoefficientOfVariation, isGoalMet } from '../utils/stats/numeric';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function scoreColor(n) {
   if (n >= 75) return 'var(--success-color)';
-  if (n >= 50) return '#f59e0b';
+  if (n >= 50) return 'var(--warning-color)';
   return 'var(--danger-color)';
 }
 
@@ -18,7 +19,7 @@ function trendIcon(dir) {
   return '↔️';
 }
 
-function dayOfWeekRates(entries, trackingType) {
+function dayOfWeekRates(entries, trackingType, goal) {
   const keys = getSortedKeys(entries);
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thur', 'Fri', 'Sat'];
   const counts = Array(7).fill(0);
@@ -28,9 +29,12 @@ function dayOfWeekRates(entries, trackingType) {
     const d = parseStoredDate(k).getDay();
     counts[d]++;
     const v = entries[k];
-    if (trackingType === 'completion' ? v === 'yes' : (typeof v === 'number' && v > 0)) {
-      hits[d]++;
-    }
+    // Quantity "success" honors the goal + direction — for an at_most habit a
+    // big value is a miss, not a hit.
+    const success = trackingType === 'completion'
+      ? v === 'yes'
+      : typeof v === 'number' && (goal?.value ? isGoalMet(v, goal.value, goal.direction) : v > 0);
+    if (success) hits[d]++;
   }
 
   return dayNames.map((name, i) => ({
@@ -70,23 +74,39 @@ function getBinaryTips(stats, dayRates) {
   return tips.slice(0, 3);
 }
 
-function getNumericTips(stats, trend) {
+function getNumericTips(stats, trend, goal) {
   const tips = [];
   const { avg, stdDev, count } = stats;
+  // at_most = reduction habit (e.g. screen time): lower is better, so the
+  // good/bad framing of a trend flips.
+  const isReduction = goal?.direction === 'at_most';
 
   if (trend.direction === 'up') {
-    tips.push({ icon: '⬆️', text: `You're on an upward trend (+${trend.changePercent}%). Keep it up — consistency drives exponential results.` });
+    if (isReduction) {
+      tips.push({ icon: '⬆️', text: `Numbers are creeping up (+${trend.changePercent}%). Spot what's driving the increase and set a hard stop.` });
+    } else {
+      tips.push({ icon: '⬆️', text: `You're on an upward trend (+${trend.changePercent}%). Keep it up — consistency drives exponential results.` });
+    }
   } else if (trend.direction === 'down') {
-    tips.push({ icon: '⬇️', text: 'Numbers are sliding down. Identify if it\'s recovery/rest or a motivation dip.' });
+    if (isReduction) {
+      tips.push({ icon: '⬇️', text: `Numbers are coming down (${trend.changePercent}%). Exactly the direction you want — keep it going.` });
+    } else {
+      tips.push({ icon: '⬇️', text: 'Numbers are sliding down. Identify if it\'s recovery/rest or a motivation dip.' });
+    }
   }
 
   if (stdDev > avg * 0.5 && count >= 7) {
-    tips.push({ icon: '🎢', text: 'High variance in your numbers. Try targeting a minimum floor rather than aiming for a peak each time.' });
+    tips.push({
+      icon: '🎢',
+      text: isReduction
+        ? 'High variance in your numbers. Try setting a daily ceiling you can hold every day, rather than alternating big and small days.'
+        : 'High variance in your numbers. Try targeting a minimum floor rather than aiming for a peak each time.',
+    });
   }
 
   if (count < 14) {
     tips.push({ icon: '📦', text: 'Keep logging consistently — analytics become much more meaningful with 14+ data points.' });
-  } else if (trend.forecast !== null && trend.direction === 'up') {
+  } else if (trend.forecast !== null && trend.direction === 'up' && !isReduction) {
     tips.push({ icon: '🎯', text: `On this trajectory you could hit ~${trend.forecast} within the next 7 days.` });
   }
 
@@ -207,7 +227,7 @@ function CompletionAnalytics({ entries }) {
     const adv = getAdvancedStats(entries);
     const week = getWeekData(entries);
     const month = getMonthData(entries);
-    const dayRates = dayOfWeekRates(entries, 'completion');
+    const dayRates = dayOfWeekRates(entries, 'completion', null);
     const tips = getBinaryTips(adv, dayRates);
 
     const weekVsMonth =
@@ -291,7 +311,7 @@ function CompletionAnalytics({ entries }) {
               {adv.consistencyScore >= 75 ? 'Rock solid' : adv.consistencyScore >= 50 ? 'Building steadily' : 'Needs attention'}
             </p>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-              Based on variance in your weekly performance over the last 30 days
+              Confidence-adjusted success rate across your full history (small samples score lower)
             </p>
           </div>
         </div>
@@ -326,12 +346,12 @@ function QuantityAnalytics({ entries, definition }) {
     const stats = getNumericStats(entries);
     const trend = getNumericTrend(entries);
     const week = getWeekNumericData(entries);
-    const dayRates = dayOfWeekRates(entries, 'quantity');
-    const tips = getNumericTips(stats, trend);
+    const dayRates = dayOfWeekRates(entries, 'quantity', definition?.goal);
+    const tips = getNumericTips(stats, trend, definition?.goal);
     const cv = getCoefficientOfVariation(entries);
 
     return { stats, trend, week, dayRates, tips, cv };
-  }, [entries]);
+  }, [entries, definition]);
 
   if (!data) {
     return (
@@ -343,9 +363,15 @@ function QuantityAnalytics({ entries, definition }) {
 
   const { stats, trend, week, dayRates, tips, cv } = data;
   const unit = definition?.unit ? ` ${definition.unit}` : '';
+  const isReduction = definition?.goal?.direction === 'at_most';
+  // For reduction habits a downward trend is the win — color and copy follow suit.
+  const trendIsGood = trend.direction === 'up' ? !isReduction : trend.direction === 'down' ? isReduction : null;
 
   return (
     <div className="space-y-6">
+      {/* 30-day trend line */}
+      <TrendChart entries={entries} definition={definition} />
+
       {/* Volume */}
       <div>
         <SectionTitle>Volume</SectionTitle>
@@ -375,9 +401,12 @@ function QuantityAnalytics({ entries, definition }) {
         >
           <span className="text-3xl">{trendIcon(trend.direction)}</span>
           <div>
-            <p className="font-bold text-sm" style={{ color: 'var(--text-primary)' }}>
-              {trend.direction === 'up' ? `Trending up +${trend.changePercent}%`
-                : trend.direction === 'down' ? `Trending down ${trend.changePercent}%`
+            <p
+              className="font-bold text-sm"
+              style={{ color: trendIsGood === null ? 'var(--text-primary)' : trendIsGood ? 'var(--success-color)' : 'var(--danger-color)' }}
+            >
+              {trend.direction === 'up' ? `Trending up +${trend.changePercent}%${isReduction ? ' — heading over your limit' : ''}`
+                : trend.direction === 'down' ? `Trending down ${trend.changePercent}%${isReduction ? ' — cutting back nicely' : ''}`
                 : trend.direction === 'insufficient' ? 'Not enough data for trend'
                 : 'Steady performance'}
             </p>

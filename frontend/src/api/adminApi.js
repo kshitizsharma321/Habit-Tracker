@@ -16,6 +16,17 @@ export const updateAdminRole = (userId, isAdmin) =>
 export const fetchAdminUserHabits = (userId) =>
   apiFetchJSON(`/admin/users/${userId}/habits`);
 
+// Set a temp password; the user must choose a new one on next login.
+export const resetUserPassword = (userId, tempPassword) =>
+  apiFetchJSON(`/admin/users/${userId}/reset-password`, {
+    method: 'POST',
+    body: JSON.stringify({ tempPassword }),
+  });
+
+// Returns { token, username } — a 1-hour token to view the app as this user.
+export const impersonateUser = (userId) =>
+  apiFetchJSON(`/admin/users/${userId}/impersonate`, { method: 'POST' });
+
 // The single latest backup for a user (or null).
 export const fetchAdminUserBackup = (userId) =>
   apiFetchJSON(`/admin/users/${userId}/backup`);
@@ -46,6 +57,5 @@ export const restoreFromUploadedCsv = (csvText, newUserPassword) =>
 export const generateUserBackup = (userId) =>
   apiFetchJSON(`/admin/users/${userId}/generate-backup`, { method: 'POST' });
 
-// Delete a user's backup.
-export const deleteUserBackup = (userId) =>
-  apiFetchJSON(`/admin/users/${userId}/backup`, { method: 'DELETE' });
+// NOTE: backups deliberately cannot be deleted from the app — an orphaned backup
+// is the only remaining copy of a deleted account (audit F13).

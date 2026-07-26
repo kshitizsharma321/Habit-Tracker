@@ -16,6 +16,7 @@ const habitSchema = new mongoose.Schema({
   date: {
     type: String,
     required: true,
+    match: [/^\d{4}-\d{2}-\d{2}$/, 'date must be a YYYY-MM-DD key'],
   },
   value: {
     type: mongoose.Schema.Types.Mixed,

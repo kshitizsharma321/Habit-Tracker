@@ -3,9 +3,9 @@ import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchDashboard } from '../api/habitDefinitionsApi';
 import { saveEntry } from '../api/entriesApi';
+import { useAuth } from '../contexts/AuthContext';
 
-import { getDateKey } from '../utils/dates';
-import { calculateStreaks, calculateStreaksFromGoal, fillMissingDays } from '../utils/stats';
+import { getDateKey, dateFormatters } from '../utils/dates';
 import { CELEBRATION_MILESTONES } from '../constants/milestones';
 import { celebrateMilestone } from '../lib/celebrate';
 import DynamicLogEntry from '../components/DynamicLogEntry/DynamicLogEntry';
@@ -128,9 +128,12 @@ function HabitCard({ def, entry, allEntries, isSaving, onLog, onNavigate }) {
 }
 
 export default function TodayPage() {
-  const { definitions, defsLoading } = useOutletContext();
+  const { definitions: allDefinitions, defsLoading } = useOutletContext();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Archived habits keep their history but leave the daily views.
+  const definitions = allDefinitions.filter((d) => !d.archived);
 
   const { data: dashboardData, isLoading: dashboardLoading } = useQuery({
     queryKey: ['dashboard'],
@@ -167,26 +170,25 @@ export default function TodayPage() {
       notify.error("Couldn't save", err.message || 'Check your connection and try again.');
     },
     // Celebrate when a *today* log pushes a habit onto a streak milestone.
-    onSuccess: (_data, { habitId, date }) => {
+    // The entry response carries the server-computed streak over FULL history,
+    // so milestones beyond the dashboard's 60-day window (e.g. 100) still fire.
+    onSuccess: (data, { habitId, date }) => {
+      if (typeof data?.currentStreak === 'number') {
+        queryClient.setQueryData(['dashboard'], (old) =>
+          old ? { ...old, streaks: { ...old.streaks, [habitId]: data.currentStreak } } : old);
+      }
       const todayKey = getDateKey(new Date());
       if (date !== todayKey) return; // ignore backdated edits
       const def = definitions.find((d) => d._id === habitId);
       if (!def) return;
-      const raw = queryClient.getQueryData(['dashboard'])?.allEntries?.[habitId] || {};
-      const entries = {};
-      for (const [d, v] of Object.entries(raw)) entries[d] = v && typeof v === 'object' ? v.value : v;
-      let streak = 0;
-      if (def.trackingType === 'completion') {
-        streak = calculateStreaks(fillMissingDays(entries)).currentStreak;
-      } else if (def.goal?.value) {
-        streak = calculateStreaksFromGoal(entries, def.goal.value, def.goal.direction).currentStreak;
-      }
-      const milestone = CELEBRATION_MILESTONES.find((m) => m === streak);
-      if (milestone) celebrateMilestone({ habitId, habitName: def.name, milestone });
+      const milestone = CELEBRATION_MILESTONES.find((m) => m === data?.currentStreak);
+      if (milestone) celebrateMilestone({ userId: user?._id, habitId, habitName: def.name, milestone });
     },
-    // Mark the detail-page cache stale (it isn't mounted, so this won't trigger a refetch now).
+    // The optimistic update already matches the server — mark caches stale for
+    // the next mount instead of refetching immediately.
     onSettled: (_d, _e, { habitId }) => {
-      queryClient.invalidateQueries({ queryKey: ['habit-entries', habitId] });
+      queryClient.invalidateQueries({ queryKey: ['habit-entries', habitId], refetchType: 'none' });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'], refetchType: 'none' });
     },
   });
 
@@ -194,9 +196,8 @@ export default function TodayPage() {
     logMutation.mutate({ habitId, date, value });
   }, [logMutation]);
 
-  const todayDate = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-  });
+  // IST like every date in the app — the header must match the day being logged.
+  const todayDate = dateFormatters.display(new Date());
 
   // Show skeletons until both the habit list and today's entries are ready.
   if (defsLoading || (dashboardLoading && !dashboardData)) {

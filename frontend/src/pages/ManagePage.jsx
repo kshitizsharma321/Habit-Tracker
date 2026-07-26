@@ -31,7 +31,7 @@ function DeleteDialog({ habit, isOpen, onClose, onConfirm, isDeleting }) {
 }
 
 export default function ManagePage() {
-  const { definitions, defsLoading, createHabit, isCreating, updateHabit, isUpdating, deleteHabit, isDeleting, reorderHabits, isReordering } = useOutletContext();
+  const { definitions, defsLoading, createHabitAsync, isCreating, updateHabitAsync, isUpdating, deleteHabit, isDeleting, reorderHabits, isReordering } = useOutletContext();
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') === 'add' ? 'add' : 'list');
   const [editingId, setEditingId] = useState(null);
@@ -95,7 +95,7 @@ export default function ManagePage() {
 
   const handleSave = async () => {
     const profile = {
-      name: form.name.trim(), trackingType: form.trackingType, color: form.color, icon: form.icon,
+      name: form.name.trim(), color: form.color, icon: form.icon,
       unit: form.trackingType === 'quantity' ? form.unit : undefined,
     };
     if (form.trackingType === 'quantity') {
@@ -106,14 +106,19 @@ export default function ManagePage() {
       profile.goal = { enabled: false, value: 1 };
     }
 
-    if (editingId) {
-      updateHabit({ id: editingId, data: profile });
+    // Only reset once the server accepts — a rejection (e.g. duplicate name)
+    // must not wipe what the user typed. Errors are toasted by the mutation hook.
+    try {
+      if (editingId) {
+        // trackingType is locked after creation and deliberately not sent on updates.
+        await updateHabitAsync({ id: editingId, data: profile });
+      } else {
+        await createHabitAsync({ ...profile, trackingType: form.trackingType });
+      }
       resetForm();
       setActiveTab('list');
-    } else {
-      createHabit(profile);
-      resetForm();
-      setActiveTab('list');
+    } catch {
+      /* keep the form as-is so the user can correct and retry */
     }
   };
 
@@ -142,7 +147,15 @@ export default function ManagePage() {
         </TabsList>
 
         <TabsContent value="list">
-          <HabitList definitions={definitions} startEdit={startEdit} setDeleteTarget={setDeleteTarget} loading={defsLoading} reorderHabits={reorderHabits} isReordering={isReordering} />
+          <HabitList
+            definitions={definitions}
+            startEdit={startEdit}
+            setDeleteTarget={setDeleteTarget}
+            loading={defsLoading}
+            reorderHabits={reorderHabits}
+            isReordering={isReordering}
+            onToggleArchive={(def) => updateHabitAsync({ id: def._id, data: { archived: !def.archived } }).catch(() => {})}
+          />
         </TabsContent>
 
         <TabsContent value="add">

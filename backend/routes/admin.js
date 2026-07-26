@@ -1,21 +1,18 @@
 const express = require('express');
-const mongoose = require('mongoose');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, signImpersonationToken } = require('../middleware/auth');
+const { validateObjectId } = require('../middleware/validateObjectId');
 const User = require('../models/User');
 const HabitDefinition = require('../models/HabitDefinition');
 const Habit = require('../models/Habit');
 const Backup = require('../models/Backup');
 const Subscription = require('../models/Subscription');
-const { supabase, BACKUP_BUCKET } = require('../lib/supabase');
+const { getSupabase, BACKUP_BUCKET } = require('../lib/supabase');
+const { parseCsvLine, buildUserBackupCsv } = require('../lib/csv');
+const { getISTDateKey, isValidDateKey } = require('../lib/dates');
+const { normalizeEntryValue } = require('../lib/validate');
+const { sendError } = require('../lib/errors');
 
 const router = express.Router();
-
-function escapeCsvCell(v) {
-  const s = String(v ?? '');
-  return s.includes(',') || s.includes('"') || s.includes('\n')
-    ? `"${s.replace(/"/g, '""')}"`
-    : s;
-}
 
 function requireAdmin(req, res, next) {
   if (!req.user || !req.user.isAdmin) {
@@ -24,18 +21,27 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Backups are an optional feature — routes that need Supabase answer 503 when unconfigured.
+function requireSupabase(req, res, next) {
+  if (!getSupabase()) {
+    return res.status(503).json({ error: 'Backups are not configured on this server (missing Supabase env vars)' });
+  }
+  next();
+}
+
 router.use(requireAuth);
 router.use(requireAdmin);
 
-// ── Shared CSV parser ─────────────────────────────────────────────────────────
-// Parses a backup CSV (or any compatible upload) and restores entries.
-// The targetUserId can be provided to scope the restore; otherwise it looks up
-// the username in each row.
+// ── Shared CSV restore ────────────────────────────────────────────────────────
+// Parses a backup CSV (quote-aware — habit names may contain commas) and restores
+// entries. targetUserId scopes the restore; otherwise each row's username is looked
+// up, optionally recreating deleted accounts when newUserPassword is provided.
+// Every value/date passes the same validation as the live entry routes.
 async function restoreFromCsvText(text, { targetUserId = null, newUserPassword = null } = {}) {
   const lines = text.split('\n').filter((l) => l.trim());
   if (lines.length < 2) return { restored: 0, errors: 0, message: 'File is empty or missing header row' };
 
-  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+  const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
   const idx = (name) => headers.indexOf(name);
 
   const usernameIdx = idx('username');
@@ -61,12 +67,13 @@ async function restoreFromCsvText(text, { targetUserId = null, newUserPassword =
 
   for (let i = 1; i < lines.length; i++) {
     try {
-      const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+      const cols = parseCsvLine(lines[i]);
       const habitName = cols[habitIdx];
       const entryDate = cols[dateIdx];
       const rawValue = cols[valueIdx];
 
       if (!habitName || !entryDate || rawValue === undefined || rawValue === '') { errors++; continue; }
+      if (!isValidDateKey(entryDate) || entryDate > getISTDateKey()) { errors++; continue; }
 
       let userId = targetUserId;
       if (!userId && usernameIdx >= 0) {
@@ -85,8 +92,6 @@ async function restoreFromCsvText(text, { targetUserId = null, newUserPassword =
       }
       if (!userId) { errors++; continue; }
 
-      const parsedValue = rawValue !== '' && !isNaN(Number(rawValue)) ? Number(rawValue) : rawValue;
-
       let def = await HabitDefinition.findOne({ userId, name: habitName });
       if (!def) {
         def = await HabitDefinition.create({
@@ -104,9 +109,13 @@ async function restoreFromCsvText(text, { targetUserId = null, newUserPassword =
         });
       }
 
+      const parsedValue = rawValue !== '' && !isNaN(Number(rawValue)) ? Number(rawValue) : rawValue;
+      const normalized = normalizeEntryValue(def.trackingType, parsedValue);
+      if (!normalized.ok) { errors++; continue; }
+
       await Habit.findOneAndUpdate(
         { userId, habitId: def._id, date: entryDate },
-        { value: parsedValue },
+        { value: normalized.value },
         { upsert: true }
       );
       restored++;
@@ -129,7 +138,7 @@ router.get('/stats', async (req, res) => {
     ]);
     res.json({ users, habits, entries });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch stats', message: err.message });
+    sendError(res, 500, 'Failed to fetch stats', err);
   }
 });
 
@@ -141,17 +150,17 @@ router.get('/users', async (req, res) => {
       .sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch users', message: err.message });
+    sendError(res, 500, 'Failed to fetch users', err);
   }
 });
 
 // ── Get habits for a specific user ───────────────────────────────────────────
-router.get('/users/:id/habits', async (req, res) => {
+router.get('/users/:id/habits', validateObjectId(), async (req, res) => {
   try {
     const habits = await HabitDefinition.find({ userId: req.params.id }).sort({ order: 1 });
     res.json(habits);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch user habits', message: err.message });
+    sendError(res, 500, 'Failed to fetch user habits', err);
   }
 });
 
@@ -168,23 +177,23 @@ router.get('/orphaned-backups', async (req, res) => {
     const orphaned = backups.filter((b) => !existing.has(String(b.userId)));
     res.json(orphaned);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch orphaned backups', message: err.message });
+    sendError(res, 500, 'Failed to fetch orphaned backups', err);
   }
 });
 
 // ── Get the single latest backup for a user ──────────────────────────────────
-router.get('/users/:id/backup', async (req, res) => {
+router.get('/users/:id/backup', validateObjectId(), async (req, res) => {
   try {
     const backup = await Backup.findOne({ userId: req.params.id })
       .select('date habitCount entryCount updatedAt');
     res.json(backup || null);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch user backup', message: err.message });
+    sendError(res, 500, 'Failed to fetch user backup', err);
   }
 });
 
 // ── Download the latest backup — returns a short-lived Supabase signed URL ────
-router.get('/users/:id/backup/download', async (req, res) => {
+router.get('/users/:id/backup/download', validateObjectId(), requireSupabase, async (req, res) => {
   try {
     const backup = await Backup.findOne({ userId: req.params.id });
     if (!backup) return res.status(404).json({ error: 'Backup not found' });
@@ -194,19 +203,19 @@ router.get('/users/:id/backup/download', async (req, res) => {
     const safeName = rawName.replace(/[^a-zA-Z0-9-_]+/g, '_').replace(/^_+|_+$/g, '');
     const filename = `habit-backup_${safeName}_${backup.date}.csv`;
 
-    const { data, error } = await supabase.storage
+    const { data, error } = await getSupabase().storage
       .from(BACKUP_BUCKET)
       .createSignedUrl(backup.filePath, 3600, { download: filename });
 
     if (error) throw error;
     res.json({ signedUrl: data.signedUrl });
   } catch (err) {
-    res.status(500).json({ error: 'Download failed', message: err.message });
+    sendError(res, 500, 'Download failed', err);
   }
 });
 
 // ── Delete user + cascade all their data ─────────────────────────────────────
-router.delete('/users/:id', async (req, res) => {
+router.delete('/users/:id', validateObjectId(), async (req, res) => {
   try {
     const { id } = req.params;
     if (String(id) === String(req.user._id)) {
@@ -227,28 +236,66 @@ router.delete('/users/:id', async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to delete user', message: err.message });
+    sendError(res, 500, 'Failed to delete user', err);
+  }
+});
+
+// ── Reset a user's password (F1a) ─────────────────────────────────────────────
+// Sets a temp password + mustChangePassword; the user is forced to pick a new
+// password on next login. Works for locked-out username-only accounts.
+router.post('/users/:id/reset-password', validateObjectId(), async (req, res) => {
+  try {
+    const { tempPassword } = req.body;
+    if (!tempPassword || String(tempPassword).length < 6) {
+      return res.status(400).json({ error: 'Temp password must be at least 6 characters' });
+    }
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.isAdmin) return res.status(400).json({ error: "Cannot reset another admin's password" });
+
+    target.password = String(tempPassword);
+    target.mustChangePassword = true;
+    await target.save();
+    res.json({ success: true });
+  } catch (err) {
+    sendError(res, 500, 'Failed to reset password', err);
+  }
+});
+
+// ── Impersonate a user (F1b) ──────────────────────────────────────────────────
+// Returns a short-lived (1h) token for the target user with an `imp` claim.
+// Password change + account deletion are blocked while impersonating.
+router.post('/users/:id/impersonate', validateObjectId(), async (req, res) => {
+  try {
+    const target = await User.findById(req.params.id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.isAdmin) return res.status(400).json({ error: 'Cannot impersonate another admin' });
+
+    console.log(`👁 Impersonation: admin @${req.user.username} → @${target.username} (${new Date().toISOString()})`);
+    res.json({ token: signImpersonationToken(target._id, req.user._id), username: target.username });
+  } catch (err) {
+    sendError(res, 500, 'Failed to impersonate user', err);
   }
 });
 
 // ── Toggle admin role ─────────────────────────────────────────────────────────
-router.put('/users/:id/role', async (req, res) => {
+router.put('/users/:id/role', validateObjectId(), async (req, res) => {
   try {
     const { id } = req.params;
     const { isAdmin } = req.body;
     if (String(id) === String(req.user._id)) {
       return res.status(400).json({ error: 'Cannot change your own role' });
     }
-    const user = await User.findByIdAndUpdate(id, { isAdmin }, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(id, { isAdmin: !!isAdmin }, { new: true }).select('-password');
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json(user);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update role', message: err.message });
+    sendError(res, 500, 'Failed to update role', err);
   }
 });
 
 // ── Restore from stored backup (fetches CSV from Supabase) ───────────────────
-router.post('/restore-from-backup', async (req, res) => {
+router.post('/restore-from-backup', requireSupabase, async (req, res) => {
   try {
     const { userId, newUserPassword } = req.body;
     if (!userId) {
@@ -268,7 +315,7 @@ router.post('/restore-from-backup', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const { data: blob, error: downloadError } = await supabase.storage
+    const { data: blob, error: downloadError } = await getSupabase().storage
       .from(BACKUP_BUCKET)
       .download(backup.filePath);
 
@@ -284,58 +331,26 @@ router.post('/restore-from-backup', async (req, res) => {
     );
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: 'Restore from backup failed', message: err.message });
+    sendError(res, 500, 'Restore from backup failed', err);
   }
 });
 
 // ── Generate a fresh backup for a specific user right now ────────────────────
-router.post('/users/:id/generate-backup', async (req, res) => {
+router.post('/users/:id/generate-backup', validateObjectId(), requireSupabase, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const today = new Date();
-    const todayIST = new Date(today.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-    const dateKey = `${todayIST.getFullYear()}-${String(todayIST.getMonth() + 1).padStart(2, '0')}-${String(todayIST.getDate()).padStart(2, '0')}`;
-
-    const definitions = await HabitDefinition.find({ userId: user._id }).sort({ order: 1 });
-    if (definitions.length === 0) {
-      return res.json({ message: 'No habits found — nothing to back up', date: dateKey, habitCount: 0, entryCount: 0 });
+    const dateKey = getISTDateKey();
+    const built = await buildUserBackupCsv(user._id);
+    if (!built) {
+      return res.json({ message: 'No habits or entries found — nothing to back up', date: dateKey, habitCount: 0, entryCount: 0 });
     }
 
-    const username = user.username || user.email || String(user._id);
-    const rows = [[
-      'Username', 'Habit Name', 'Tracking Type', 'Unit', 'Color', 'Icon',
-      'Goal Enabled', 'Goal Value', 'Goal Direction', 'Date', 'Value',
-    ]];
-    let entryCount = 0;
-
-    for (const def of definitions) {
-      const entries = await Habit.find({ habitId: def._id, userId: user._id }).sort({ date: 1 });
-      for (const e of entries) {
-        rows.push([
-          escapeCsvCell(username),
-          escapeCsvCell(def.name),
-          escapeCsvCell(def.trackingType),
-          escapeCsvCell(def.unit || ''),
-          escapeCsvCell(def.color || ''),
-          escapeCsvCell(def.icon || ''),
-          escapeCsvCell(def.goal?.enabled ? 'true' : 'false'),
-          escapeCsvCell(def.goal?.enabled ? def.goal.value : ''),
-          escapeCsvCell(def.goal?.enabled ? (def.goal.direction || 'at_least') : ''),
-          e.date,
-          escapeCsvCell(String(e.value)),
-        ]);
-        entryCount++;
-      }
-    }
-
-    const csv = rows.map((r) => r.join(',')).join('\n');
     const filePath = `${user._id}/latest.csv`;
-
-    const { error: uploadError } = await supabase.storage
+    const { error: uploadError } = await getSupabase().storage
       .from(BACKUP_BUCKET)
-      .upload(filePath, Buffer.from(csv, 'utf8'), {
+      .upload(filePath, Buffer.from(built.csv, 'utf8'), {
         contentType: 'text/csv; charset=utf-8',
         upsert: true,
       });
@@ -344,28 +359,20 @@ router.post('/users/:id/generate-backup', async (req, res) => {
 
     await Backup.findOneAndUpdate(
       { userId: user._id },
-      { date: dateKey, username: user.username || '', filePath, habitCount: definitions.length, entryCount },
+      { date: dateKey, username: user.username || '', filePath, habitCount: built.habitCount, entryCount: built.entryCount },
       { upsert: true, new: true }
     );
 
-    res.json({ message: 'Backup generated', date: dateKey, habitCount: definitions.length, entryCount });
+    res.json({ message: 'Backup generated', date: dateKey, habitCount: built.habitCount, entryCount: built.entryCount });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to generate backup', message: err.message });
+    sendError(res, 500, 'Failed to generate backup', err);
   }
 });
 
-// ── Delete a user's backup ───────────────────────────────────────────────────
-router.delete('/users/:id/backup', async (req, res) => {
-  try {
-    const backup = await Backup.findOneAndDelete({ userId: req.params.id });
-    if (!backup) return res.status(404).json({ error: 'Backup not found' });
-    // Best-effort: delete from Supabase (don't fail the request if this errors)
-    await supabase.storage.from(BACKUP_BUCKET).remove([backup.filePath]).catch(() => {});
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to delete backup', message: err.message });
-  }
-});
+// NOTE: There is deliberately NO delete-backup endpoint. Backups are the last
+// line of defense — deleting an orphaned backup would permanently destroy a
+// deleted account's only remaining data. Cleanup, if ever needed, is a manual
+// operation in the Supabase dashboard. (Decision: July 2026, audit F13.)
 
 // ── Restore from uploaded CSV (same format as backup) ────────────────────────
 // Accepts JSON-wrapped raw CSV text in the same format the backup cron generates.
@@ -381,7 +388,7 @@ router.post('/restore-from-csv', async (req, res) => {
     const result = await restoreFromCsvText(csvText, { newUserPassword: newUserPassword || null });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: 'Restore failed', message: err.message });
+    sendError(res, 500, 'Restore failed', err);
   }
 });
 

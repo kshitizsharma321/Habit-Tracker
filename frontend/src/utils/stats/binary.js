@@ -2,39 +2,40 @@ import { getDateKey, parseStoredDate } from '../dates';
 import { getSortedKeys, wilsonScore, ewma } from './shared';
 import { isGoalMet } from './numeric';
 
+// Walks real calendar days, not just recorded keys — a day with no entry breaks
+// the streak. (Iterating keys let sparse quantity data "streak" across gaps.)
+// Today not yet logged does NOT zero the streak; today logged as a miss does.
 export function calculateStreaks(data) {
   const keys = getSortedKeys(data);
   if (keys.length === 0) return { currentStreak: 0, longestStreak: 0 };
 
   const todayKey = getDateKey(new Date());
-  const todayVal = data[todayKey];
 
-  let startIndex = keys.length - 1;
-  if (!todayVal && keys[keys.length - 1] === todayKey) {
-    startIndex = keys.length - 2;
-  }
+  const cursor = parseStoredDate(todayKey);
+  if (data[todayKey] === undefined) cursor.setDate(cursor.getDate() - 1);
 
   let currentStreak = 0;
-  for (let i = startIndex; i >= 0; i--) {
-    const val = data[keys[i]];
-    if (val === 'yes') {
-      currentStreak++;
-    } else {
-      break;
-    }
+  while (data[getDateKey(cursor)] === 'yes') {
+    currentStreak++;
+    cursor.setDate(cursor.getDate() - 1);
   }
 
   let longestStreak = 0;
   let tempStreak = 0;
-  for (const key of keys) {
-    const val = data[key];
-    if (val === 'yes') {
+  const day = parseStoredDate(keys[0]);
+  const end = parseStoredDate(todayKey);
+  while (day <= end) {
+    if (data[getDateKey(day)] === 'yes') {
       tempStreak++;
       if (tempStreak > longestStreak) longestStreak = tempStreak;
     } else {
       tempStreak = 0;
     }
+    day.setDate(day.getDate() + 1);
   }
+  // Today unlogged resets tempStreak at the very end — the current run must
+  // still count toward the longest.
+  if (currentStreak > longestStreak) longestStreak = currentStreak;
 
   return { currentStreak, longestStreak };
 }

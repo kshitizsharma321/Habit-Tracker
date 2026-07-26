@@ -5,7 +5,7 @@ import { Input } from './ui/input';
 import { PasswordInput } from './ui/password-input';
 import { notify } from '../lib/toast';
 
-export default function LoginPage({ onSwitch }) {
+export default function LoginPage({ onSwitch, onForgot }) {
   const { login, loginWithGoogle } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -84,6 +84,16 @@ export default function LoginPage({ onSwitch }) {
           >
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
+
+          <p className="text-center">
+            <button
+              type="button"
+              onClick={onForgot}
+              className="text-sm text-text-secondary hover:text-ht-accent hover:underline"
+            >
+              Forgot password?
+            </button>
+          </p>
         </form>
 
         {googleClientId && (

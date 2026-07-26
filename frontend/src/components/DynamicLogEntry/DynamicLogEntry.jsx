@@ -67,7 +67,13 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
           </div>
         );
 
-      case 'quantity':
+      case 'quantity': {
+        const loggedAmount = typeof entryForDate?.value === 'number' ? entryForDate.value : null;
+        const addAmount = (n) => {
+          const next = Math.round(((loggedAmount || 0) + n) * 100) / 100;
+          setNumericValue(String(next));
+          handleLog(next);
+        };
         return (
           <div className="flex flex-col gap-2 mt-2">
             <div className="flex items-center gap-2">
@@ -77,26 +83,31 @@ export default function DynamicLogEntry({ definition, existingEntry, onLog, isSa
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') logIfValid(numericValue);
                 }}
-                placeholder="Amount"
-                className="w-28 text-center"
+                placeholder={unit ? `How many ${unit}?` : 'How much today?'}
+                className="w-36 text-center"
               />
               {unit && <span className="text-sm text-muted-foreground">{unit}</span>}
               <Button onClick={() => logIfValid(numericValue)} disabled={isSaving || numericValue === ''}>
                 📝 Log
               </Button>
             </div>
-            {unit && (
-              <div className="flex gap-1.5 flex-wrap">
-                {[1, 2, 3, 5].map((n) => (
-                  <Button key={n} variant="outline" size="sm"
-                    onClick={() => { setNumericValue(String(n)); handleLog(n); }}>
-                    {n} {unit}
-                  </Button>
-                ))}
-              </div>
-            )}
+            {/* Increment chips — ADD to the day's total instead of overwriting it */}
+            <div className="flex gap-1.5 flex-wrap items-center">
+              {[1, 5].map((n) => (
+                <Button key={n} variant="outline" size="sm" disabled={isSaving}
+                  onClick={() => addAmount(n)}>
+                  +{n}{unit ? ` ${unit}` : ''}
+                </Button>
+              ))}
+              {loggedAmount !== null && (
+                <span className="text-xs text-muted-foreground">
+                  Logged: {loggedAmount}{unit ? ` ${unit}` : ''}
+                </span>
+              )}
+            </div>
           </div>
         );
+      }
 
       default:
         return null;

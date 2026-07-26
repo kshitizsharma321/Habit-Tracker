@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { changePassword, checkUsernameAvailability } from '../api/authApi';
+import { changePassword, checkUsernameAvailability, exportData } from '../api/authApi';
 import NotificationSettings from '../components/NotificationSettings/NotificationSettings';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -31,6 +31,7 @@ export default function SettingsPage() {
       <PasswordSection />
       {!user?.isAdmin && <NotificationSection />}
       <ThemeSection />
+      {!user?.isAdmin && <DataExportSection />}
       <SignOutSection />
       {!user?.isAdmin && <DangerSection />}
     </div>
@@ -215,6 +216,48 @@ function ThemeSection() {
   );
 }
 
+function DataExportSection() {
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const { csv, filename, message, entryCount } = await exportData();
+      if (!csv) {
+        notify.info('Nothing to export yet', message || 'Log a few entries first.');
+        return;
+      }
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      notify.success('Data exported', `${entryCount} entries downloaded as CSV.`);
+    } catch (err) {
+      notify.error('Export failed', err.message || 'Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <h2 className="font-semibold text-foreground mb-1">📦 Your data</h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Download everything — all habits and every logged entry — as a single CSV file.
+      </p>
+      <Button variant="outline" onClick={handleExport} disabled={exporting}>
+        {exporting ? 'Preparing…' : '⬇️ Download my data'}
+      </Button>
+    </Card>
+  );
+}
+
 function SignOutSection() {
   const { logout } = useAuth();
   return (
@@ -246,7 +289,8 @@ function DangerSection() {
     <Card className="p-5" style={{ borderColor: 'var(--danger-color)' }}>
       <h2 className="font-semibold text-foreground mb-1">⚠️ Delete account</h2>
       <p className="text-sm text-muted-foreground mb-4">
-        Permanently delete your account, habits, entries, reminders and backups. This can't be undone.
+        Permanently delete your account, habits, entries and reminders. A final backup snapshot
+        is kept so an admin can recover the account if this was a mistake.
       </p>
       <Button variant="destructive" onClick={() => setOpen(true)}>Delete my account</Button>
 
@@ -255,7 +299,8 @@ function DangerSection() {
           <DialogHeader>
             <DialogTitle>Delete account?</DialogTitle>
             <DialogDescription>
-              This permanently deletes your account and all associated data. This action cannot be undone.
+              This permanently deletes your account and all associated data. A final backup
+              snapshot is kept — contact an admin if you ever want the account recovered.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4">

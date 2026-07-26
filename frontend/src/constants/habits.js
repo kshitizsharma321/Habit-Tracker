@@ -19,7 +19,7 @@
 
 export const TEMPLATES = [
   // ── Core habits ──────────────────────────────────────────────────────────────
-  { name: 'Exercise',    icon: '🏋️', type: 'completion', color: '#22c55e', unit: 'minutes',   goal: { value: 30 } },
+  { name: 'Exercise',    icon: '🏋️', type: 'quantity',   color: '#22c55e', unit: 'minutes', goal: { value: 30 } },
   { name: 'Study',       icon: '📚', type: 'quantity',   color: '#3b82f6', unit: 'hours',   goal: { value: 2 } },
   { name: 'Read',        icon: '📖', type: 'completion', color: '#a855f7' },
   { name: 'Meditate',    icon: '🧘', type: 'completion', color: '#f59e0b' },

@@ -25,11 +25,12 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
+    // A real 401 is handled inside apiFetch (clears token + reloads). Any other
+    // failure here is a network blip / cold start — keep the token so the user
+    // isn't silently logged out; they'll get straight in on the next load.
     fetchMe()
       .then((data) => setUser(data.user))
-      .catch(() => {
-        setToken(null);
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
@@ -60,6 +61,14 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  // Re-fetch the current user (e.g. after a forced password change clears
+  // mustChangePassword server-side).
+  const refreshUser = useCallback(async () => {
+    const data = await fetchMe();
+    setUser(data.user);
+    return data.user;
+  }, []);
+
   const logout = useCallback(async () => {
     await teardownPushNotifications();
     setToken(null);
@@ -76,7 +85,7 @@ export function AuthProvider({ children }) {
   }, [queryClient]);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, loginWithGoogle, updateUser, logout, deleteAccount }}>
+    <AuthContext.Provider value={{ user, loading, login, register, loginWithGoogle, updateUser, refreshUser, logout, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   );

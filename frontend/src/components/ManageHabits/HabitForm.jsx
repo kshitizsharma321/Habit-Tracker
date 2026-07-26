@@ -64,7 +64,7 @@ function IconPicker({ value, onChange }) {
 
       <Input
         className="mt-2 w-24"
-        maxLength={2}
+        maxLength={4}
         placeholder="Type emoji"
         value={custom}
         onChange={(e) => {
@@ -84,7 +84,7 @@ export default function HabitForm({ form, setForm, handleSave, isSaving, editing
     <div className="max-w-md space-y-4 mt-4">
       <div>
         <Label>Name</Label>
-        <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Enter habit name" />
+        <Input value={form.name} maxLength={60} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Enter habit name" />
       </div>
 
       <div>

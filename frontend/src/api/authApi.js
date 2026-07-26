@@ -46,6 +46,26 @@ export async function changePassword({ currentPassword, newPassword }) {
   });
 }
 
+// Always resolves with a generic message (anti-enumeration on the server).
+export async function requestPasswordReset(usernameOrEmail) {
+  return apiFetchJSON('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ usernameOrEmail }),
+  });
+}
+
+export async function resetPassword({ token, newPassword }) {
+  return apiFetchJSON('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, newPassword }),
+  });
+}
+
 export async function deleteAccount() {
   return apiFetchJSON('/auth/account', { method: 'DELETE' });
+}
+
+// Full-account CSV export — returns { csv, filename } (csv null when no data yet).
+export async function exportData() {
+  return apiFetchJSON('/auth/export');
 }

@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext, Navigate } from 'react-router-dom';
 import { useHabitEntries } from '../hooks/useHabitEntries';
 import StreakCalendar from '../components/StreakCalendar/StreakCalendar';
 import StatsGrid from '../components/StatsGrid';
+import CoachNote from '../components/CoachNote';
 import SmartInsights from '../components/SmartInsights';
 import AnalyticsPanel from '../components/AnalyticsPanel';
 import History from '../components/History/History';
@@ -156,7 +157,7 @@ export default function HabitDetailPage() {
     [definitions, habitId],
   );
 
-  const { entries, rawEntries, isLoading: entriesLoading } = useHabitEntries(habitId, definition?.trackingType);
+  const { entries, rawEntries, isLoading: entriesLoading } = useHabitEntries(habitId, definition);
 
   const streak = useMemo(() => {
     if (definition?.trackingType === 'completion') {
@@ -243,7 +244,7 @@ export default function HabitDetailPage() {
               variant="outline"
               size="sm"
               className="text-xs"
-              onClick={() => downloadCSV(entries, `habit-${definition.name}`)}
+              onClick={() => downloadCSV(rawEntries, `habit-${definition.name}`)}
             >
               📊 Export
             </Button>
@@ -289,13 +290,14 @@ export default function HabitDetailPage() {
 
         {/* ── Analytics tab ────────────────────────────────────────── */}
         <TabsContent value="analytics" className="space-y-4 mt-4">
+          {hasData && <CoachNote habitId={habitId} enabled={activeTab === 'analytics'} />}
           {hasData && <SmartInsights entries={entries} definition={definition} />}
           <AnalyticsPanel entries={entries} definition={definition} />
         </TabsContent>
 
         {/* ── History tab ──────────────────────────────────────────── */}
         <TabsContent value="history" className="mt-4">
-          <History habitData={entries} rawData={rawEntries} />
+          <History habitData={entries} rawData={rawEntries} definition={definition} />
         </TabsContent>
       </Tabs>
       )}

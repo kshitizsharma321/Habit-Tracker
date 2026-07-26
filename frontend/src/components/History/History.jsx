@@ -1,13 +1,8 @@
 import { useState, useMemo } from 'react';
-import { groupByMonth } from '../../utils/stats';
+import { groupByMonth, isGoalMet } from '../../utils/stats';
 import { dateFormatters, parseStoredDate } from '../../utils/dates';
 import { Switch } from '../ui/switch';
 import styles from './History.module.scss';
-
-function entryBorderClass(val) {
-  if (val === 'yes') return styles.yesBorder;
-  return styles.noBorder;
-}
 
 /** Group { "April 2026": [...] } → { 2026: { "April 2026": [...] } } */
 function groupMonthsByYear(monthGroups) {
@@ -20,8 +15,27 @@ function groupMonthsByYear(monthGroups) {
   return byYear;
 }
 
-export default function History({ habitData, rawData }) {
+export default function History({ habitData, rawData, definition }) {
   const [hideAutoFilled, setHideAutoFilled] = useState(false);
+
+  // Quantity entries are numbers judged against the goal (honoring direction);
+  // completion entries are 'yes'/'no'. Rendering must not assume one type.
+  const isQuantity = definition?.trackingType === 'quantity';
+  const goal = definition?.goal;
+
+  const isSuccess = (value) => {
+    if (isQuantity) {
+      if (typeof value !== 'number') return false;
+      return goal?.value ? isGoalMet(value, goal.value, goal.direction) : value > 0;
+    }
+    return value === 'yes';
+  };
+
+  // Sign only, same as completion habits — the exact amount shows on hover.
+  const entryTooltip = (value) => {
+    if (!isQuantity || typeof value !== 'number') return undefined;
+    return `${value}${definition?.unit ? ` ${definition.unit}` : ''}`;
+  };
 
   const currentYear = new Date().getFullYear();
   const currentMonthKey = dateFormatters.monthYear(new Date());
@@ -76,14 +90,17 @@ export default function History({ habitData, rawData }) {
         <h3 className="text-xl font-semibold text-text-primary">
           Your Habit History
         </h3>
-        <div className="flex items-center gap-2 text-sm text-text-secondary select-none">
-          <Switch
-            id="hide-autofilled"
-            checked={hideAutoFilled}
-            onCheckedChange={setHideAutoFilled}
-          />
-          <label htmlFor="hide-autofilled" className="cursor-pointer">Show only logged entries</label>
-        </div>
+        {/* Auto-filled days only exist for completion habits — quantity history is always raw logs */}
+        {!isQuantity && (
+          <div className="flex items-center gap-2 text-sm text-text-secondary select-none">
+            <Switch
+              id="hide-autofilled"
+              checked={hideAutoFilled}
+              onCheckedChange={setHideAutoFilled}
+            />
+            <label htmlFor="hide-autofilled" className="cursor-pointer">Show only logged entries</label>
+          </div>
+        )}
       </div>
 
       {sortedYears.length === 0 ? (
@@ -130,7 +147,7 @@ export default function History({ habitData, rawData }) {
                     {monthsInYear.map((monthKey) => {
                       const monthExpanded = expandedMonths.has(monthKey);
                       const entries = byYear[year][monthKey];
-                      const yesCount = entries.filter((e) => e.value === 'yes').length;
+                      const yesCount = entries.filter((e) => isSuccess(e.value)).length;
 
                       return (
                         <div key={monthKey} className={styles.monthBlock}>
@@ -154,12 +171,13 @@ export default function History({ habitData, rawData }) {
                                 .map(({ key, value }) => (
                                   <div
                                     key={key}
-                                    className={`${styles.entryCard} ${entryBorderClass(value)}`}
+                                    className={`${styles.entryCard} ${isSuccess(value) ? styles.yesBorder : styles.noBorder}`}
+                                    title={entryTooltip(value)}
                                   >
                                     <span className={styles.dateText}>
                                       {dateFormatters.short(parseStoredDate(key))}
                                     </span>
-                                    <span>{value === 'yes' ? '✅' : '❌'}</span>
+                                    <span>{isSuccess(value) ? '✅' : '❌'}</span>
                                   </div>
                                 ))}
                             </div>

@@ -1,6 +1,6 @@
 # Habit Tracker
 
-A full-stack, multi-user habit tracking web app. Create any number of habits, log them daily, and get streaks, stats, and real analytics. Sign in with a username/password or Google. Your nightly data is backed up to cloud storage automatically.
+A full-stack, multi-user habit tracking web app. Create any number of habits, log them daily, and get streaks, statistical analytics, and AI-written coaching. Sign in with a username/password or Google. Your data is backed up to cloud storage nightly, and you can export it yourself at any time.
 
 **Deployed on:** Vercel (frontend) · Render (backend) · MongoDB Atlas (database) · Supabase Storage (backups)
 
@@ -14,11 +14,15 @@ A full-stack, multi-user habit tracking web app. Create any number of habits, lo
 - [Project Structure](#project-structure)
 - [Local Development](#local-development)
 - [Environment Variables](#environment-variables)
+- [Email Setup (Password Reset)](#email-setup-password-reset)
+- [AI Insights Setup](#ai-insights-setup)
 - [Supabase Backup Setup](#supabase-backup-setup)
 - [Deploying](#deploying)
 - [Keeping Render Alive (Free Tier)](#keeping-render-alive-free-tier)
+- [Testing](#testing)
 - [API Reference](#api-reference)
 - [Data Model](#data-model)
+- [Security](#security)
 - [Conventions & Notable Decisions](#conventions--notable-decisions)
 - [Troubleshooting](#troubleshooting)
 
@@ -33,63 +37,73 @@ A full-stack, multi-user habit tracking web app. Create any number of habits, lo
   - **Quantity** — numeric (km, hours, pages, glasses…). Set a goal with a **direction**:
     - **Reach at least** (build-up) — a day counts when you meet or exceed the target (e.g. ≥ 8 glasses of water).
     - **Stay under** (cut-down) — a day counts when you stay at or below the limit (e.g. ≤ 1 hr screen time).
-- Edit, **drag to reorder** (persists instantly, no Save button — with up/down arrow fallback on touch), and delete habits at any time. Deleting a habit clears its entries.
-- **Duplicate-name protection** — habit names are blocked case-insensitively per user.
-- **Template picker** for quick setup (Exercise, Reading, Water, etc.) with an "Add your own" card; already-added templates are marked and disabled.
+- Edit, **drag to reorder** (persists instantly — with up/down arrow fallback on touch), and delete habits at any time.
+- **Archive** a habit to hide it from daily views, reminders, and the AI digest while keeping its full history — restore it whenever you like.
+- **Duplicate-name protection** — habit names are blocked case-insensitively per user (archived names included).
+- **Template picker** for quick setup (Exercise, Reading, Water…) with an "Add your own" card.
 - **Milestone celebrations** — hit a 7/10/30/60/100-day streak and get a confetti burst (respects `prefers-reduced-motion`).
+- **Tracking type is locked after creation** — analytics semantics depend on it, so it can't be switched mid-history.
 
 ### Track (Today)
 - All habits on one page; log inline without leaving the page.
-- Log for a **past date** via the custom in-app date picker.
-- **Optimistic updates** — the UI responds instantly and rolls back on failure.
-- Friendly, themed toast feedback on every action.
+- Quantity habits get **+1 / +5 increment chips** that add to the day's running total, plus a text field for an exact value.
+- Log for a **past date** via the in-app date picker.
+- **Optimistic updates** — the UI responds instantly and rolls back on failure. Streaks come back from the server in the same response, so the number is authoritative without an extra request.
 
 ### Dashboard
-- A motivation-first hub: time-based greeting, a **today's-progress ring**, and at-a-glance chips (habits done, active streaks, longest active streak).
-- **Motivation & insights** — top-performer and needs-attention cards, plus an auto-generated insights digest.
-- A compact per-habit strip; clicking a habit opens its detail page. Renders gracefully for 0, 1, or many habits.
+- Time-based greeting, a **today's-progress ring**, and at-a-glance chips (habits done, active streaks, best current streak).
+- **Top performer** and **needs attention** cards.
+- **🤖 Today's digest** — one AI-written paragraph per day summarising every habit by name with real numbers. Falls back silently to a rule-based insight list when AI is unconfigured, rate-limited, or erroring.
+- A compact per-habit strip; clicking a habit opens its detail page.
 
 ### Per-Habit Detail
-A clean three-tab view (the URL stays a generic `/detail` — no ugly id):
-- **Overview** — streak banner with milestone messaging (day 1 → 365+), stats grid, and a 5-week streak calendar.
-- **Analytics** — `SmartInsights` (auto-generated text insights) plus `AnalyticsPanel` (consistency gauge, week/month comparison, day-of-week chart, improvement tips).
+A three-tab view (the URL stays a generic `/detail` — no id):
+- **Overview** — streak banner with milestone messaging, stats grid, and a 5-week streak calendar.
+- **Analytics** — a **30-day trend chart** (quantity habits), an AI **Coach's note**, `SmartInsights`, and `AnalyticsPanel` (consistency gauge, week/month comparison, day-of-week chart, improvement tips). Every figure and framing is goal-direction aware.
 - **History** — collapsible year → month accordion, "show only logged entries" filter, and CSV export.
 
 ### Stats & Analytics
-- Current + longest streak (longest never resets).
-- Success rate, totals, averages — type-aware.
-- Advanced algorithms, all dependency-free and computed client-side:
+- Current + longest streak. Streaks are **calendar-aware**: a skipped day breaks them, and an unlogged *today* doesn't zero them (the day isn't over).
+- Success rates, totals, averages — type- and direction-aware.
+- Advanced algorithms, all dependency-free:
   - **EWMA** trend confirmation
-  - **Wilson Score** lower bound for a confidence-adjusted consistency score
+  - **Wilson score** lower bound for a confidence-adjusted consistency score
   - **Z-score** anomaly / personal-best detection
-  - **Coefficient of Variation** for stability
+  - **Coefficient of variation** for stability
   - DIY **linear regression** for trend direction
+- Charts are hand-built SVG/CSS — no charting library.
 
-### Authentication
+### AI Insights (optional)
+- **Coach's note** per habit and one **daily digest** per account, generated by **Google Gemini** through the backend (the API key never reaches the browser).
+- Prompts receive **computed aggregates, not raw history**, and include explicit rules for reduction (`at_most`) habits so lower values are never mistaken for regressions.
+- Cached in MongoDB and keyed on a **fingerprint of the underlying stats**, so the text regenerates when your data changes rather than going stale for the rest of the day — with a per-day regeneration cap to bound API usage.
+- Entirely optional: without a key the app is fully functional and the rule-based text takes over.
+
+### Authentication & Account Recovery
 - **Username + password** registration and login (email optional; login also accepts email).
-- Live username-availability check on the register/settings forms.
-- **Google Sign-In** (one click) via `@react-oauth/google` + `google-auth-library`.
-- JWT stored in `localStorage`; each user sees only their own data.
-- **Show/hide password** toggle on every password field.
-- Profile management: edit name/username/email, change password, toggle dark/light theme, and **delete your own account** (with confirmation; tears down push subscriptions and reminder settings).
+- Live username-availability check.
+- **Google Sign-In** via `@react-oauth/google` + `google-auth-library`. Google accounts hold no password at all.
+- **Forgot password** — self-serve email reset with a single-use link that expires in 30 minutes.
+- **Admin password reset** — an admin can set a temporary password, forcing a new-password screen on the user's next login.
+- **Admin impersonation** — "View as user" issues a short-lived scoped token with a persistent banner and one-click return; destructive actions are blocked while impersonating.
+- Profile management: edit name/username/email, change password, toggle dark/light theme, **export all your data as CSV**, and delete your own account.
 
 ### Push Notifications
-- Opt-in daily reminder at a **custom time** (per user, any hour and minute 00–59), built on the Web Push API with VAPID keys and a service worker.
+- Opt-in daily reminder at a **custom time**, built on the Web Push API with VAPID keys and a service worker.
+- **Smart reminders** — the cron skips users who already finished everything and names the habits still pending ("Still pending today: Reading, Water").
 - "Test now" button to verify delivery.
-- Logging out or deleting your account tears down the push subscription and clears reminder settings (no orphaned reminders).
 
 ### Admin
-- Role-gated admin dashboard (`user.isAdmin`):
-  - Usage **stats** (users / habits / entries — admins excluded).
-  - **User management** — list, expand to view a user's habits, change role, delete. Deleting a user removes their habits and entries **but intentionally preserves their backup** for recovery.
-  - **Backup & Restore** — each user's single latest backup: download (signed URL), generate on demand, delete, or restore.
-  - **Orphaned backups** — backups whose user was deleted are listed separately and can be **recovered**, which recreates the account (admin sets a temporary password) and restores all habits + entries.
-  - **CSV upload** — import entries from a backup-format CSV; can recreate missing accounts named in the CSV.
-  - Responsive layout and a **Refresh** button with a live loading spinner.
+Role-gated dashboard (`user.isAdmin`):
+- Usage **stats** (users / habits / entries — admins excluded).
+- **User management** — list, expand a user's habits, change role, reset password, impersonate, delete. Deleting a user removes their live data but **intentionally preserves their backup**.
+- **Backup & restore** — download (signed URL), generate on demand, or restore.
+- **Orphaned backups** — backups whose user was deleted are listed separately and can be **recovered**, recreating the account and restoring all habits + entries.
+- **CSV upload** — import entries from a backup-format CSV with a validated preview.
 
 ### Backups
-- A nightly cron (23:55 IST) writes **one CSV per user** (all habits, all entries) to a **private Supabase Storage bucket** at `<userId>/latest.csv`. Each run **overwrites** that single file, so backups never accumulate. MongoDB stores only the file path (plus a username snapshot so backups stay identifiable after deletion).
-- Downloads use **short-lived (1-hour) signed URLs**, so backup files are never publicly exposed.
+- A nightly cron (23:55 IST) writes **one CSV per user** to a **private Supabase Storage bucket** at `<userId>/latest.csv`, overwriting each run so backups never accumulate. MongoDB stores only the file path plus a username snapshot.
+- Downloads use short-lived **1-hour signed URLs** — backup files are never publicly exposed.
 
 ---
 
@@ -97,12 +111,15 @@ A clean three-tab view (the URL stays a generic `/detail` — no ugly id):
 
 | Layer | Tech |
 |---|---|
-| Frontend | React 18, Vite 5, TanStack Query v5, Tailwind CSS 3, SCSS Modules, shadcn/ui (Radix), react-hot-toast, canvas-confetti |
-| Backend | Node.js, Express 4, Mongoose 8, node-cron |
+| Frontend | React 18, Vite 5, TanStack Query v5, React Router 6, Tailwind CSS 3, SCSS Modules, shadcn/ui (Radix), react-hot-toast, canvas-confetti |
+| Backend | Node.js, Express 4, Mongoose 8, node-cron, helmet, express-rate-limit |
 | Database | MongoDB Atlas (`habit-tracker` db) |
 | Backup storage | Supabase Storage (private `habit-backups` bucket) |
 | Auth | JWT + bcrypt + Google OAuth (`google-auth-library`) |
+| Email | Gmail SMTP via `nodemailer` |
+| AI | Google Gemini (REST, behind the backend) |
 | Push | Web Push API, VAPID, Service Worker |
+| Testing | Vitest |
 | Hosting | Vercel (FE) + Render (BE) |
 
 ---
@@ -113,15 +130,17 @@ A clean three-tab view (the URL stays a generic `/detail` — no ugly id):
 Browser (React SPA, Vercel)
    │  fetch via src/api/client.js  (injects JWT, handles 401)
    ▼
-Express API (Render)  ──JWT auth──▶  MongoDB Atlas  (users, habits, entries, subscriptions, backup refs)
+Express API (Render)  ──JWT auth──▶  MongoDB Atlas
    │
-   ├── node-cron: every minute   → Web Push reminders
-   └── node-cron: 23:55 IST      → CSV per user → Supabase Storage (private bucket)
-                                     MongoDB keeps only the filePath; downloads via signed URLs
+   ├── node-cron: every minute  → Web Push reminders (skips users already done)
+   ├── node-cron: 23:55 IST     → CSV per user → Supabase Storage (private bucket)
+   ├── Gemini  → AI notes & digest (cached per user/day, always degrades to null)
+   └── Gmail SMTP → password-reset emails
 ```
 
 - The frontend **never calls `fetch()` directly** — everything goes through `src/api/client.js`.
-- The habit list is loaded once (`GET /habit-definitions`) and shared app-wide via the Layout's Outlet context; the dashboard endpoint returns **only entries**.
+- The habit list is loaded once (`GET /habit-definitions`) and shared app-wide via the Layout's Outlet context.
+- **Streaks and success rates are computed server-side over full history.** The dashboard payload carries only a 60-day entry window for rendering, so deriving all-time figures from it client-side would silently cap them.
 
 ---
 
@@ -130,61 +149,58 @@ Express API (Render)  ──JWT auth──▶  MongoDB Atlas  (users, habits, en
 ```
 Habit Tracker/
 ├── backend/
-│   ├── server.js                   # Express entry — push sub routes, cron jobs, startup index sync, health
+│   ├── server.js                   # Express entry — push subs, crons, 404/error middleware, health
 │   ├── routes/
-│   │   ├── auth.js                 # register, login, google, me, check-username, profile, password, claim-data, delete
-│   │   ├── habitDefinitions.js     # habit CRUD + entries + dashboard (with duplicate-name + quantity validation)
-│   │   └── admin.js                # admin: stats, users, role, per-user backup, orphaned backups, restore, CSV import (requireAdmin)
+│   │   ├── auth.js                 # register, login, google, forgot/reset password, profile, export, delete
+│   │   ├── habitDefinitions.js     # habit CRUD + entries + dashboard (streaks & successRates)
+│   │   ├── admin.js                # stats, users, role, reset-password, impersonate, backups, restore, CSV import
+│   │   └── insights.js             # AI coach note + daily digest (always 200, text:null fallback)
 │   ├── lib/
-│   │   └── supabase.js             # Supabase client (service-role) + BACKUP_BUCKET constant
+│   │   ├── config.js               # ENV source of truth — fails loudly in prod, startup banner
+│   │   ├── errors.js               # sendError() — logs server-side, hides internals in prod
+│   │   ├── dates.js                # IST helpers — all backend date logic
+│   │   ├── streaks.js              # calculateCurrentStreak / calculateSuccessRate (full history)
+│   │   ├── validate.js             # normalizeEntryValue — every entry write path
+│   │   ├── csv.js                  # quote-aware parser + shared backup builder
+│   │   ├── email.js                # Gmail SMTP (nodemailer)
+│   │   ├── aiInsights.js           # Gemini prompts + REST calls
+│   │   └── supabase.js             # lazy Supabase client + bucket constant
 │   ├── middleware/
-│   │   └── auth.js                 # signToken(), requireAuth (loads full req.user)
-│   ├── models/
-│   │   ├── User.js                 # username (unique sparse), email?, password, name, googleId, isAdmin, onboardingComplete
-│   │   ├── HabitDefinition.js      # name, trackingType, unit, goal {enabled,value,direction}, color, icon, order
-│   │   ├── Habit.js                # userId, habitId, date, value — indexes {userId,habitId,date} & {userId,date}
-│   │   ├── Subscription.js         # Web Push subscriptions
-│   │   └── Backup.js               # backup ref: { userId, date, username, filePath, habitCount, entryCount } — unique on {userId}
+│   │   ├── auth.js                 # signToken, signImpersonationToken, requireAuth
+│   │   └── validateObjectId.js     # clean 400s for malformed :id params
+│   ├── models/                     # User, HabitDefinition, Habit, Subscription, Backup, AiInsight, PasswordReset
 │   ├── .env.example
 │   └── package.json
 └── frontend/
     ├── src/
-    │   ├── App.jsx                  # Root — providers, router, auth/onboarding gates, <Toaster>
+    │   ├── App.jsx                  # Providers, router, auth/onboarding gates, <Toaster>
     │   ├── pages/                   # TodayPage, DashboardPage, HabitDetailPage, ManagePage, SettingsPage, AdminDashboard
     │   ├── components/
-    │   │   ├── Layout.jsx           # App shell, header, mobile nav (Track/Dashboard/Habits), Outlet context (definitions + mutations)
-    │   │   ├── DynamicLogEntry/     # Type-aware log form (Done/Skip or numeric + presets)
-    │   │   ├── StreakCalendar/      # 5-week colour grid (direction-aware goal cells)
+    │   │   ├── Layout.jsx           # App shell, nav, impersonation banner, Outlet context
+    │   │   ├── DynamicLogEntry/     # Type-aware log form (Done/Skip or numeric + increment chips)
+    │   │   ├── StreakCalendar/      # 5-week colour grid (direction-aware)
     │   │   ├── History/             # Year → month accordion
-    │   │   ├── ManageHabits/        # HabitForm, HabitList (drag reorder), TemplateList ("Add your own")
-    │   │   ├── NotificationSettings/# Push toggle + custom time picker (hour + 00–59 minute)
+    │   │   ├── ManageHabits/        # HabitForm, HabitList (drag reorder + archived section)
+    │   │   ├── NotificationSettings/# Push toggle + time picker
     │   │   ├── OnboardingWizard/    # Template picker for new users
-    │   │   ├── SmartInsights.jsx    # Generated insight cards
-    │   │   ├── AnalyticsPanel.jsx   # Deep stats panel (gauge, charts, tips)
-    │   │   ├── StatsGrid.jsx        # Stat cards
-    │   │   ├── ProfileDropdown.jsx  # settings, theme, sign out
-    │   │   ├── LoginPage.jsx        # Username + password (show/hide) + Google
-    │   │   ├── RegisterPage.jsx     # Username (live availability) + email + password (show/hide)
-    │   │   └── ui/                  # shadcn/ui: button, card, dialog, input, password-input, select, switch, tabs, date-picker…
-    │   ├── lib/
-    │   │   ├── toast.jsx            # notify.success/error/info() — themed toast helper (use instead of react-hot-toast)
-    │   │   ├── celebrate.js         # canvas-confetti milestone fireworks (+ reduced-motion fallback)
-    │   │   └── utils.js             # cn() classname helper
-    │   ├── api/
-    │   │   ├── client.js            # apiFetch / apiFetchJSON — auth headers, 401 redirect, base URL
-    │   │   ├── authApi.js           # register, login, checkUsernameAvailability, updateProfile, deleteAccount…
-    │   │   ├── habitDefinitionsApi.js
-    │   │   ├── entriesApi.js
-    │   │   ├── onboardingApi.js
-    │   │   └── adminApi.js          # stats, users, backup, orphaned backups, signed-URL download, restore
+    │   │   ├── TrendChart.jsx       # 30-day SVG line chart (goal reference line, gaps break)
+    │   │   ├── CoachNote.jsx        # AI note card (hidden when unavailable)
+    │   │   ├── SmartInsights.jsx    # Rule-based insight cards
+    │   │   ├── AnalyticsPanel.jsx   # Gauge, comparisons, day-of-week chart, tips
+    │   │   ├── LoginPage.jsx        # Username + password + Google + "Forgot password?"
+    │   │   ├── ForgotPasswordPage.jsx / ResetPasswordPage.jsx
+    │   │   ├── ForcePasswordChange.jsx
+    │   │   └── ui/                  # shadcn/ui primitives
+    │   ├── lib/                     # toast.jsx (notify), celebrate.js, utils.js
+    │   ├── api/                     # client.js, authApi, habitDefinitionsApi, entriesApi, insightsApi, adminApi
     │   ├── hooks/                   # useHabitDefinitions, useHabitEntries, useOnboarding, useNotifications
     │   ├── contexts/                # AuthContext, ThemeContext
-    │   ├── constants/               # habits.js (TEMPLATES, COLORS, TYPE_LABELS), milestones.js (CELEBRATION_MILESTONES)
     │   ├── utils/
-    │   │   ├── dates.js             # getDateKey(), parseStoredDate() — IST timezone
-    │   │   └── stats/               # binary.js, numeric.js (isGoalMet), insights.js, regression.js, shared.js
+    │   │   ├── dates.js             # getDateKey(), parseStoredDate() — IST
+    │   │   └── stats/               # binary, numeric (isGoalMet), insights, regression, shared + __tests__/
     │   └── styles/                  # globals.scss (CSS vars + dark mode), _animations.scss
-    ├── vercel.json                  # SPA rewrite (all routes → index.html)
+    ├── vite.config.js               # Dev /api proxy + production build guard
+    ├── vercel.json                  # SPA rewrite
     ├── .env.example
     └── package.json
 ```
@@ -196,7 +212,6 @@ Habit Tracker/
 ### Prerequisites
 - Node.js ≥ 18
 - MongoDB running locally **or** a free MongoDB Atlas cluster
-- (Optional) A Supabase project if you want to test backups
 
 ### 1. Backend
 ```bash
@@ -211,18 +226,27 @@ npm run dev      # nodemon on port 3000
 ```bash
 cd frontend
 npm install
-cp .env.example .env
-# VITE_API_URL is pre-filled to http://localhost:3000/api for local dev
-npm run dev      # Vite at http://localhost:5173
+cp .env.example .env      # optional locally — see below
+npm run dev               # Vite at http://localhost:5173
 ```
 
-Vite proxies `/api` → `http://localhost:3000`, so both servers run independently. Run `npm run build` in `frontend/` to verify a production build.
+**`VITE_API_URL` is not needed for local dev.** The client falls back to a relative `/api`, and Vite proxies it to `http://localhost:3000`. It *is* required for production builds — the build fails without it (see [Environment Variables](#environment-variables)).
+
+On boot the backend prints which environment it's in and which integrations are live:
+
+```
+🚀 Server listening on port 3000
+
+🛠  DEVELOPMENT  ·  NODE_ENV=development
+   Frontend origin : http://localhost:5173
+   Integrations    : ✅ Google  ✅ Email  ⬜ Push  ✅ AI  ⬜ Backups
+```
 
 ---
 
 ## Environment Variables
 
-Both `.env.example` files document every variable with `[REQUIRED]`/`[OPTIONAL]` tags. Summary:
+Both `.env.example` files document every variable. Summary:
 
 ### `backend/.env`
 
@@ -230,35 +254,69 @@ Both `.env.example` files document every variable with `[REQUIRED]`/`[OPTIONAL]`
 |---|---|---|
 | `MONGODB_URI` | ✅ | MongoDB connection string |
 | `JWT_SECRET` | ✅ | Random secret — `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `FRONTEND_URL` | Production | CORS origin — your Vercel URL, no trailing slash |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Optional | Web Push keys (set both to enable reminders) |
+| `FRONTEND_URL` | ✅ in production | Drives **both** the CORS allowlist and the links inside password-reset emails. Comma-separate to allow several origins (Vercel previews); the **first** is canonical and used in emails. **The server refuses to start in production without it.** |
+| `NODE_ENV` | Recommended | Set to `production` on your host to enable config guards and error-message hiding. Render sets it automatically. |
+| `GMAIL_USER` / `GMAIL_APP_PASSWORD` | Optional | Password-reset emails — see [Email Setup](#email-setup-password-reset) |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | Optional | AI insights — see [AI Insights Setup](#ai-insights-setup) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Optional | Web Push keys (set both). Generate: `npx web-push generate-vapid-keys` |
 | `GOOGLE_CLIENT_ID` | Optional | Enables Google Sign-In |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Optional | Enables nightly backups (set both). The service-role key is **server-only** — never expose it. |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Optional | Enables nightly backups (set both). The service-role key is **server-only**. |
 | `PORT` | Optional | Default 3000; Render sets this automatically |
-
-Generate VAPID keys once: `npx web-push generate-vapid-keys`
 
 ### `frontend/.env`
 
+> ⚠️ **These are baked in at build time.** Vite substitutes `import.meta.env.*` into the bundle when you build — it is not a runtime lookup. On Vercel, **adding or changing any variable does nothing until you redeploy.** Nothing here is secret; everything ships to the browser.
+
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_API_URL` | ✅ | Backend base URL — `https://<your-app>.onrender.com/api` in production (no trailing slash) |
+| `VITE_API_URL` | ✅ for production builds | Backend base URL — `https://<your-app>.onrender.com/api`. **The production build fails without it**, rather than shipping a bundle pointing at localhost. Leave empty locally. |
 | `VITE_VAPID_PUBLIC_KEY` | Optional | Must match `VAPID_PUBLIC_KEY` in the backend |
-| `VITE_GOOGLE_CLIENT_ID` | Optional | Must match `GOOGLE_CLIENT_ID` in the backend |
+| `VITE_GOOGLE_CLIENT_ID` | Optional | Must match `GOOGLE_CLIENT_ID` in the backend. The Google button only renders when this is set. |
 
-> If `SUPABASE_*` are unset, the app runs fine — the backup cron simply logs a warning and skips. If `VAPID_*` are unset, the reminders UI is hidden.
+Every integration is independently optional — a missing credential disables exactly one feature and never prevents the server from starting.
+
+---
+
+## Email Setup (Password Reset)
+
+Emails are sent through **Gmail's own SMTP server**, not a third-party ESP. Resend, Brevo, SendGrid and similar services all reject a `@gmail.com` sender address on their free plans, because a third party sending "from" gmail.com fails SPF/DKIM alignment — they require a domain you own. Sending through Gmail makes Google the actual sender, so alignment is correct, deliverability is good, and no domain is needed.
+
+1. On the Gmail account that will send the mail, turn on **2-Step Verification** → [myaccount.google.com/security](https://myaccount.google.com/security)
+2. Create an **App Password** → [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (App Passwords only exist once 2FA is on)
+3. Set in `backend/.env`:
+   ```
+   GMAIL_USER=you@gmail.com
+   GMAIL_APP_PASSWORD=abcd efgh ijkl mnop   # spaces are fine, they're stripped
+   GMAIL_FROM_NAME=Habit Tracker            # optional
+   ```
+4. Verify without going through the app:
+   ```bash
+   cd backend && node scripts/test-email.js [recipient@example.com]
+   ```
+   It checks SMTP auth separately from sending, so a failure tells you whether the App Password is wrong or the port is blocked.
+
+Free Gmail sends up to **500 emails/day**. Without these variables, "Forgot password?" quietly does nothing and admin-side reset still works.
+
+---
+
+## AI Insights Setup
+
+1. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. Set `GEMINI_API_KEY` in the backend environment (optionally `GEMINI_MODEL`, default `gemini-2.5-flash`).
+
+The key stays server-side — the frontend never talks to Gemini. Requests are rate-limited, cached per user per day, and regenerate only when your underlying stats change. Every AI endpoint answers `200` with `{ text: null }` on any failure, so the UI silently falls back to rule-based text.
 
 ---
 
 ## Supabase Backup Setup
 
 1. Create a project at [supabase.com](https://supabase.com) (free tier is enough).
-2. **Storage → New bucket** → name it `habit-backups` → leave **"Public bucket" unchecked** (it must stay private) → Create.
+2. **Storage → New bucket** → name it `habit-backups` → leave **"Public bucket" unchecked** → Create.
 3. **Settings → API** → copy the **Project URL** → `SUPABASE_URL`.
-4. Copy the **Secret / `service_role` key** (NOT the publishable/anon key) → `SUPABASE_SERVICE_ROLE_KEY`.
-5. Add both to the backend environment (Render → Environment, and your local `backend/.env`).
+4. Copy the **`service_role` key** (NOT the anon/publishable key) → `SUPABASE_SERVICE_ROLE_KEY`.
+5. Add both to the backend environment.
 
-**How it works:** each user has exactly one file at `<userId>/latest.csv` inside the private bucket (every backup run overwrites it). Because the bucket is private, there is no permanent public URL — the admin **Download** button mints a fresh 1-hour signed URL on demand (`GET /api/admin/users/:id/backup/download`). The raw path stored in MongoDB is just the object key, not a clickable link. To grab a file ad-hoc, use that endpoint or the Supabase dashboard (Storage → file → *Get signed URL*).
+**How it works:** each user has exactly one file at `<userId>/latest.csv` in the private bucket, overwritten by every run. Because the bucket is private there is no permanent public URL — the admin **Download** button mints a fresh 1-hour signed URL on demand.
 
 ---
 
@@ -272,40 +330,46 @@ Generate VAPID keys once: `npx web-push generate-vapid-keys`
 ### Render (Backend)
 1. New → Web Service → connect your GitHub repo.
 2. Root directory: `backend` · Build: `npm install` · Start: `node server.js`.
-3. Add all backend env vars (see table above).
+3. Add the backend env vars. **`FRONTEND_URL` is mandatory** — the service will exit at boot without it and tell you so in the logs.
+4. After deploying, check the startup banner in Render's logs to confirm each integration is live.
 
 ### Vercel (Frontend)
 1. New Project → import from GitHub.
 2. Root directory: `frontend` · Framework preset: Vite.
-3. Add all frontend env vars. `vercel.json` already handles SPA routing (deep links like `/detail` won't 404).
+3. Add the frontend env vars, then **redeploy** — they're compiled into the bundle at build time.
+4. `vercel.json` already handles SPA routing, so deep links like `/detail` and `/reset-password` won't 404.
 
 ### Google Sign-In (optional)
 1. [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials.
 2. Create an OAuth 2.0 **Web** Client ID.
-3. Add your Vercel URL and `http://localhost:5173` to **Authorized JavaScript Origins**.
-4. Set `GOOGLE_CLIENT_ID` (backend) and `VITE_GOOGLE_CLIENT_ID` (frontend).
+3. Add your Vercel URL **and** `http://localhost:5173` to **Authorized JavaScript Origins** (exact origin, no path, no trailing slash).
+4. Set `GOOGLE_CLIENT_ID` (backend) and `VITE_GOOGLE_CLIENT_ID` (frontend), then redeploy the frontend.
 
 ---
 
 ## Keeping Render Alive (Free Tier)
 
-Render's free tier sleeps after **15 minutes of inactivity**. While asleep, the reminder and backup crons don't fire.
+Render's free tier sleeps after **15 minutes of inactivity**, and the crons don't fire while asleep.
 
-**Fix: a free external pinger** hitting the health endpoint every 5 minutes.
+**Fix: a free external pinger** hitting `https://<your-app>.onrender.com/api/health` every 5 minutes — [UptimeRobot](https://uptimerobot.com) or [cron-job.org](https://cron-job.org).
 
-- **UptimeRobot** (recommended): New Monitor → HTTP(s) → `https://<your-app>.onrender.com/api/health` → interval 5 min.
-- **cron-job.org** (alternative): New cronjob → same URL → every 5 minutes.
-
-With a pinger running, both crons fire reliably:
-- **Push reminders** — every minute, matches any subscription's `reminderTime` against the current IST time.
+With a pinger running:
+- **Push reminders** — checked every minute against each subscription's `reminderTime` in IST.
 - **CSV backup** — daily at 23:55 IST (`55 18 * * *` in UTC).
 
-### Changing the backup time
-Edit one line in `backend/server.js` (cron is in **UTC**; IST = UTC + 5:30):
-```js
-cron.schedule('55 18 * * *', async () => {  // ← 23:55 IST
+To change the backup time, edit the cron expression in `backend/server.js` (UTC; IST = UTC + 5:30).
+
+---
+
+## Testing
+
+```bash
+cd frontend
+npm test          # Vitest — stats engine invariants
+npm run build     # also validates the production env guard
 ```
-Examples: `30 17 * * *` = 23:00 IST · `30 0 * * *` = 06:00 IST · `0 12 * * *` = 17:30 IST
+
+The suite covers the correctness-critical logic: streak gap-breaking, the "today is pending, not failed" rule, goal-direction evaluation (`at_least` / `at_most`), and missing-day backfill — the invariants responsible for past production bugs.
 
 ---
 
@@ -319,12 +383,14 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 | POST | `/api/auth/register` | No | `{ username, password, email?, name? }` |
 | POST | `/api/auth/login` | No | `{ username, password }` — also accepts email |
 | POST | `/api/auth/google` | No | `{ credential }` |
+| POST | `/api/auth/forgot-password` | No | `{ usernameOrEmail }` — always returns the same generic 200 |
+| POST | `/api/auth/reset-password` | No | `{ token, newPassword }` |
 | GET | `/api/auth/me` | Yes | — |
 | GET | `/api/auth/check-username` | No | `?u=xxx` |
 | PUT | `/api/auth/profile` | Yes | `{ name?, username?, email?, onboardingComplete? }` |
 | PUT | `/api/auth/password` | Yes | `{ currentPassword, newPassword }` |
-| POST | `/api/auth/claim-data` | Yes | `{ fromEmail }` |
-| DELETE | `/api/auth/account` | Yes | Cascade-deletes all user data |
+| GET | `/api/auth/export` | Yes | `{ csv, filename }` — full-account export |
+| DELETE | `/api/auth/account` | Yes | Cascade-deletes live data (backup preserved) |
 
 ### Habit Definitions & Entries
 | Method | Path | Auth | Notes |
@@ -332,14 +398,21 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 | GET | `/api/habit-definitions` | Yes | Sorted list (source of truth for the habit list) |
 | POST | `/api/habit-definitions` | Yes | Create |
 | POST | `/api/habit-definitions/bulk` | Yes | Batch create (onboarding) |
-| GET | `/api/habit-definitions/dashboard` | Yes | Today's entries + last-60-day entries (no definitions) |
-| PUT | `/api/habit-definitions/reorder` | Yes | `{ orderedIds }` |
-| PUT | `/api/habit-definitions/:id` | Yes | Update |
+| GET | `/api/habit-definitions/dashboard` | Yes | `{ todayEntries, allEntries, streaks, successRates }` — entries windowed to 60 days; streaks and rates computed over **full history** |
+| PUT | `/api/habit-definitions/reorder` | Yes | `{ orderedIds }` — must be exactly the user's ids |
+| PUT | `/api/habit-definitions/:id` | Yes | Update (`trackingType` not accepted; `archived` is) |
 | DELETE | `/api/habit-definitions/:id` | Yes | Delete def + all entries |
-| GET | `/api/habit-definitions/:id/entries` | Yes | Date-keyed map |
-| POST | `/api/habit-definitions/:id/entries` | Yes | `{ date, value }` upsert |
-| POST | `/api/habit-definitions/:id/entries/bulk` | Yes | `{ entries: [...] }` chunked upsert |
+| GET | `/api/habit-definitions/:id/entries` | Yes | Date-keyed map (full history) |
+| POST | `/api/habit-definitions/:id/entries` | Yes | `{ date, value }` validated upsert → `{ entry, currentStreak }` |
 | DELETE | `/api/habit-definitions/:id/entries/:date` | Yes | Delete one entry |
+
+### AI Insights
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| POST | `/api/insights/ai` | Yes | `{ habitId }` → `{ text }` — per-habit Coach's note |
+| POST | `/api/insights/ai-digest` | Yes | → `{ text }` — account-wide daily digest |
+
+Both always return `200`; `text: null` means "show the rule-based fallback".
 
 ### Admin
 | Method | Path | Notes |
@@ -347,21 +420,22 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 | GET | `/api/admin/stats` | Counts (admins excluded) |
 | GET | `/api/admin/users` | Non-admin users (no passwords) |
 | GET | `/api/admin/users/:id/habits` | A user's habits |
-| DELETE | `/api/admin/users/:id` | Delete user + cascade habits/entries (**backup preserved**) |
+| DELETE | `/api/admin/users/:id` | Delete user + cascade (**backup preserved**) |
 | PUT | `/api/admin/users/:id/role` | `{ isAdmin }` |
+| POST | `/api/admin/users/:id/reset-password` | `{ tempPassword }` → forces a password change at next login |
+| POST | `/api/admin/users/:id/impersonate` | → `{ token }` — 1-hour scoped token |
 | GET | `/api/admin/orphaned-backups` | Backups whose user was deleted (recoverable) |
-| GET | `/api/admin/users/:id/backup` | A user's single latest backup (or `null`) |
-| GET | `/api/admin/users/:id/backup/download` | `{ signedUrl }` (1-hour Supabase link) |
+| GET | `/api/admin/users/:id/backup` · `/backup/download` | Latest backup / `{ signedUrl }` |
 | POST | `/api/admin/users/:id/generate-backup` | Generate/overwrite the user's backup |
-| DELETE | `/api/admin/users/:id/backup` | Delete the backup (MongoDB + Supabase) |
-| POST | `/api/admin/restore-from-backup` | `{ userId, newUserPassword? }` — restore; password recreates a deleted account |
-| POST | `/api/admin/restore-from-csv` | `{ csvText, newUserPassword? }` import from raw CSV |
+| POST | `/api/admin/restore-from-backup` | `{ userId, newUserPassword? }` — can recreate a deleted account |
+| POST | `/api/admin/restore-from-csv` | `{ csvText, newUserPassword? }` |
+
+> **There is deliberately no delete-backup endpoint.** An orphaned backup is the only remaining copy of a deleted account's data — one misclick would make recovery permanently impossible, so the capability was removed rather than guarded by a dialog. Clean up manually in Supabase if needed.
 
 ### Push & System
 | Method | Path | Auth |
 |---|---|---|
-| POST | `/api/subscriptions` | Yes |
-| DELETE | `/api/subscriptions` | Yes |
+| POST · DELETE | `/api/subscriptions` | Yes |
 | POST | `/api/test-push` | Yes |
 | GET | `/api/health` | No |
 
@@ -369,25 +443,47 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 
 ## Data Model
 
-- **User** — `username` (unique, sparse, primary login), `email?`, `password` (bcrypt), `name`, `googleId`, `isAdmin`, `onboardingComplete`.
-- **HabitDefinition** — `userId`, `name`, `trackingType` (`completion`|`quantity`), `unit`, `goal { enabled, value, direction }` (`direction` is `at_least` | `at_most`, default `at_least`), `order`, `color`, `icon`.
-- **Habit** (one entry) — `userId`, `habitId`, `date` (`YYYY-MM-DD`), `value` (`'yes'|'no'` or a number). Unique on `{userId, habitId, date}`; extra `{userId, date}` index powers the dashboard.
-- **Subscription** — `userId`, `endpoint`, `keys`, `reminderTime` (`HH:MM`).
-- **Backup** — `userId`, `date`, `username` (snapshot for post-deletion identification), `filePath` (Supabase object key, `<userId>/latest.csv`), `habitCount`, `entryCount`. **Unique on `{userId}`** — one overwriting backup per user.
+- **User** — `username` (unique, sparse, primary login), `email?`, `password` (bcrypt; **absent entirely for Google accounts**), `name`, `googleId`, `isAdmin`, `onboardingComplete`, `mustChangePassword`.
+- **HabitDefinition** — `userId`, `name`, `trackingType` (`completion`|`quantity`), `unit`, `goal { enabled, value, direction }` (`at_least` | `at_most`), `archived`, `order`, `color`, `icon`.
+- **Habit** (one entry) — `userId`, `habitId`, `date` (`YYYY-MM-DD`), `value` (`'yes'|'no'` or a number). Unique on `{userId, habitId, date}`; `{userId, date}` index powers the dashboard scan.
+- **Subscription** — `userId`, `endpoint`, `keys`, `reminderTime` (`HH:MM`, IST).
+- **Backup** — `userId` (unique), `date`, `username` (snapshot for post-deletion identification), `filePath`, `habitCount`, `entryCount`.
+- **AiInsight** — `userId`, `habitId` (`null` = account digest), `dateKey`, `text`, `signature` (fingerprint of the stats it was generated from), `generations`. TTL 7 days.
+- **PasswordReset** — `userId`, `tokenHash` (SHA-256 — the raw token exists only in the emailed link), `expiresAt` (30 min, TTL index).
+
+Habit *definitions* and habit *entries* are separate collections, so renaming a habit or changing its goal never rewrites history.
+
+---
+
+## Security
+
+- **Passwords** hashed with bcrypt (cost 12). Google accounts store no password at all.
+- **JWT** carries only a user id — role and permission changes take effect on the next request rather than at token expiry.
+- **Every user-scoped query filters on `req.user._id`**; admin routes are guarded at the router level.
+- **Rate limiting** on all unauthenticated endpoints (login/register, username lookup, password reset) and on the AI routes.
+- **`helmet`** security headers, `trust proxy` for correct client IPs behind Render.
+- **Password reset** uses SHA-256-hashed, single-use tokens with a 30-minute TTL. The endpoint returns a byte-identical response whether the account exists, has no email, or the mail provider failed — a distinguishable error would be an account-existence oracle.
+- **Impersonation** tokens are short-lived, carry the acting admin's id, are logged server-side, and block destructive operations.
+- **Error responses hide internals in production** — the full error is logged server-side; only non-production clients see the message.
+- **No secrets reach the browser.** Only `VITE_API_URL`, `VITE_VAPID_PUBLIC_KEY`, and `VITE_GOOGLE_CLIENT_ID` are exposed, all public by design.
+
+Known accepted trade-offs: the JWT lives in `localStorage` (so an XSS would expose it — the usual SPA trade-off versus httpOnly cookies plus CSRF protection), and there is no token revocation list, so a leaked token stays valid until it expires.
 
 ---
 
 ## Conventions & Notable Decisions
 
 - **HTTP only via `client.js`** — components/hooks never call `fetch()` directly.
-- **Toasts via `notify`** — `src/lib/toast.jsx` exposes `notify.success/error/info(title, description?)`; don't import `react-hot-toast` directly.
-- **Dates are IST** — always use `getDateKey()` / `parseStoredDate()` from `utils/dates.js`; never hand-build date strings.
+- **Toasts via `notify`** — `src/lib/toast.jsx`; don't import `react-hot-toast` directly.
+- **Dates are IST** everywhere — `getDateKey()` / `parseStoredDate()` on the frontend, `getISTDateKey()` on the backend. Never hand-build date strings; never call `toLocaleDateString` without an explicit `timeZone`.
+- **Config fails loudly, never silently.** A missing setting in production is a startup crash (backend) or a failed build (frontend), never a fallback to localhost — that failure mode is invisible until a user hits a broken link or a CORS wall.
 - **Colours via CSS vars / Tailwind tokens** — no raw hex in components. Dark mode via `[data-theme]`.
-- **Generic detail route** — the per-habit page is `/detail` (no id in the URL); the active habit id lives in `sessionStorage` (`ht_active_habit`). Refresh-safe; a cold visit redirects home.
-- **Role is not in the JWT** — the token carries only `userId`; `requireAuth` loads the full user each request, and `user.isAdmin` drives both the UI and `requireAdmin`. Role changes apply immediately.
-- **Two tracking types only** — `completion` and `quantity`. (`choice` was removed and must not return.)
-- **Goal direction** — quantity goals are met via `isGoalMet(value, goal, direction)`: `at_least` (build up) or `at_most` (cut down). Threaded through streaks, the heatmap, and insights.
-- **One backup per user** — the backup is regenerable derived data; deleting a user preserves it so the account can be recovered from "Orphaned backups".
+- **Generic detail route** — the per-habit page is `/detail`; the active habit id lives in `sessionStorage`. Refresh-safe; a cold visit redirects home.
+- **Two tracking types only** — `completion` and `quantity`, locked after creation.
+- **Goal direction** — every success judgment on a quantity value goes through `isGoalMet(value, goal, direction)`. Trend *framing* branches on direction too, so a reduction habit trending down is praised, not flagged.
+- **Server owns all-time figures** — streaks and success rates are computed over full history server-side, because the dashboard payload is only a 60-day window.
+- **AI is enhancement-only** — the app is fully functional without an API key, and every AI path degrades to rule-based text.
+- **One backup per user**, preserved on account deletion so the account can be recovered.
 
 ---
 
@@ -395,17 +491,23 @@ All `/api/admin/*` routes require `requireAuth` + `requireAdmin`.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "Failed to connect" | Wrong `VITE_API_URL` | Must end with `/api`. Redeploy after changing. |
-| CORS error | `FRONTEND_URL` not set on Render | Add your Vercel URL (no trailing slash) |
+| Production build fails: "VITE_API_URL is required" | Working as intended | Set `VITE_API_URL` in Vercel → Environment Variables, then redeploy |
+| Server exits: "FRONTEND_URL is required" | Working as intended | Set `FRONTEND_URL` to your Vercel origin on Render |
+| Deployed app calls localhost | Built without `VITE_API_URL` before the guard existed | Set the variable and **redeploy** — env vars are baked in at build time |
+| CORS error | `FRONTEND_URL` missing or mismatched | Must match the browser's origin exactly (no trailing slash) |
+| Google button not showing | `VITE_GOOGLE_CLIENT_ID` unset in the build | Add it in Vercel and **redeploy** |
+| Google button errors on click | Origin not authorised | Add your exact deployed origin to Google Cloud Console → Credentials → Authorized JavaScript origins |
+| Reset email never arrives | Email env unset, or in spam | Run `node backend/scripts/test-email.js`; check `GMAIL_USER` / `GMAIL_APP_PASSWORD` |
+| Reset email auth fails | Using the account password | It must be a 16-char **App Password** with 2FA enabled |
+| Reset link points at localhost | `FRONTEND_URL` unset (dev only — production now refuses to start) | Set `FRONTEND_URL` |
+| AI digest/note missing | No `GEMINI_API_KEY`, too little data, or quota hit | Expected — the rule-based text takes over. Check the startup banner. |
 | 404 on refreshing a deep link | Missing SPA rewrite | `frontend/vercel.json` handles this — ensure it's deployed |
 | "Invalid or expired token" | `JWT_SECRET` changed | Sign out and back in |
-| Google button not showing | `VITE_GOOGLE_CLIENT_ID` not set | Add to the frontend env |
-| Backups not appearing | `SUPABASE_*` unset or bucket missing | Set both env vars; create the private `habit-backups` bucket |
-| Backup download fails | Wrong key / bucket not private-readable | Use the **service_role** key (not anon/publishable) |
+| Backups not appearing | `SUPABASE_*` unset or bucket missing | Set both; create the private `habit-backups` bucket |
+| Backup download fails | Wrong key | Use the **service_role** key, not anon/publishable |
 | Push not appearing | Browser blocking | System Settings → Notifications → allow your browser |
-| Server cold-start delay / cron skipped | Render free tier slept | Set up an UptimeRobot pinger (see above) |
-| "Username already taken" | Conflict | Choose a different username |
+| Cron skipped / cold start | Render free tier slept | Set up an UptimeRobot pinger |
 
 ---
 
-*Last updated: June 2026 — Dashboard page, goal direction (build-up / cut-down), milestone confetti, drag-to-reorder, duplicate-name protection, password show/hide, self-delete account, single-overwriting backups with orphaned-account recovery, Supabase Storage backups, generic `/detail` route, username auth.*
+*Last updated: July 2026 — Self-serve password reset (Gmail SMTP), AI insights via Gemini (Coach's note + daily digest with rule-based fallback), 30-day trend chart, habit archiving, admin password reset & impersonation, self-serve data export, smart reminders, centralised environment config with fail-loud guards, server-computed streaks & success rates, and Vitest coverage of the stats engine.*

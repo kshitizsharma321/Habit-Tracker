@@ -11,6 +11,12 @@ function signToken(userId) {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
 }
 
+// Short-lived token that lets an admin act as another user. The `imp` claim
+// records who is impersonating; destructive routes check req.impersonatorId.
+function signImpersonationToken(targetUserId, adminId) {
+  return jwt.sign({ userId: targetUserId, imp: String(adminId) }, JWT_SECRET, { expiresIn: '1h' });
+}
+
 async function requireAuth(req, res, next) {
   try {
     const header = req.headers.authorization;
@@ -24,10 +30,11 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'User not found' });
     }
     req.user = user;
+    if (decoded.imp) req.impersonatorId = decoded.imp;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
 
-module.exports = { signToken, requireAuth };
+module.exports = { signToken, signImpersonationToken, requireAuth };

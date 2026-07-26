@@ -12,8 +12,10 @@ import {
   restoreFromBackup,
   restoreFromUploadedCsv,
   generateUserBackup,
-  deleteUserBackup,
+  resetUserPassword,
+  impersonateUser,
 } from '../api/adminApi';
+import { getToken, setToken } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Card } from '../components/ui/card';
@@ -41,6 +43,34 @@ const CSV_COLUMNS = [
   { name: 'Date', required: true },
   { name: 'Value', required: true },
 ];
+
+// Quote-aware CSV line parser (mirrors the backend's) — habit names may contain
+// commas, which a naive split(',') would corrupt.
+function parseCsvLine(line) {
+  const cells = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cell += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      cells.push(cell);
+      cell = '';
+    } else {
+      cell += ch;
+    }
+  }
+  cells.push(cell);
+  return cells.map((c) => c.trim());
+}
 
 const CSV_EXAMPLE_ROWS = [
   ['@alice', 'Running', 'quantity', 'km', '#f97316', '🏃', 'true', '5', 'at_least', '2026-06-01', '4'],
@@ -116,7 +146,7 @@ function CsvDropZone({ file, onFile }) {
 }
 
 // ── User row with expandable habits ──────────────────────────────────────────
-function UserRow({ u, currentUserId, onDelete }) {
+function UserRow({ u, currentUserId, onDelete, onResetPassword, onImpersonate }) {
   const [expanded, setExpanded] = useState(false);
 
   const { data: habits, isLoading: habitsLoading } = useQuery({
@@ -145,14 +175,22 @@ function UserRow({ u, currentUserId, onDelete }) {
           {new Date(u.createdAt).toLocaleDateString()}
         </td>
         <td className="py-3">
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={currentUserId === u._id}
-            onClick={() => onDelete(u)}
-          >
-            Delete
-          </Button>
+          <div className="flex gap-1.5 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => onImpersonate(u)} title="Open the app as this user (1h, read-mostly)">
+              👁 View as
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => onResetPassword(u)} title="Set a temp password — the user picks a new one on next login">
+              🔑 Reset
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={currentUserId === u._id}
+              onClick={() => onDelete(u)}
+            >
+              Delete
+            </Button>
+          </div>
         </td>
       </tr>
 
@@ -197,8 +235,9 @@ export default function AdminDashboard() {
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [restoreTarget, setRestoreTarget] = useState(null); // { userId, label }
-  const [deleteBackupTarget, setDeleteBackupTarget] = useState(null); // { userId, label }
   const [orphanTarget, setOrphanTarget] = useState(null); // { userId, username } — recover deleted account
+  const [resetTarget, setResetTarget] = useState(null); // user object — password reset dialog
+  const [resetPassword, setResetPassword] = useState('');
   const [orphanPassword, setOrphanPassword] = useState('');
   const [csvPassword, setCsvPassword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -287,15 +326,26 @@ export default function AdminDashboard() {
     onError: (err) => notify.error("Couldn't generate backup", err.message || 'Please try again.'),
   });
 
-  const deleteBackupMutation = useMutation({
-    mutationFn: ({ userId }) => deleteUserBackup(userId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-user-backup', selectedUserId] });
-      queryClient.invalidateQueries({ queryKey: ['admin-orphaned-backups'] });
-      notify.success('Backup deleted', 'The backup was removed.');
-      setDeleteBackupTarget(null);
+  const resetPasswordMutation = useMutation({
+    mutationFn: ({ userId, tempPassword }) => resetUserPassword(userId, tempPassword),
+    onSuccess: (_res, { username }) => {
+      notify.success('Password reset', `@${username} will be asked to set a new password on next login.`);
+      setResetTarget(null);
+      setResetPassword('');
     },
-    onError: (err) => { notify.error("Couldn't delete backup", err.message || 'Please try again.'); setDeleteBackupTarget(null); },
+    onError: (err) => notify.error("Couldn't reset password", err.message || 'Please try again.'),
+  });
+
+  const impersonateMutation = useMutation({
+    mutationFn: (userId) => impersonateUser(userId),
+    onSuccess: (res) => {
+      // Stash the admin token so the banner's "Return to admin" can restore it,
+      // then boot the app as the target user.
+      sessionStorage.setItem('ht_admin_token', getToken());
+      setToken(res.token);
+      window.location.href = '/';
+    },
+    onError: (err) => notify.error("Couldn't impersonate", err.message || 'Please try again.'),
   });
 
   const handleRefresh = async () => {
@@ -349,7 +399,7 @@ export default function AdminDashboard() {
       const lines = text.split('\n').filter((l) => l.trim());
       if (lines.length < 2) { notify.error('Empty file', 'This CSV has no header row or data.'); return; }
 
-      const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+      const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
       const required = ['habit name', 'date', 'value'];
       const missing = required.filter((r) => !headers.includes(r));
       if (missing.length) {
@@ -363,7 +413,7 @@ export default function AdminDashboard() {
       const habitIdx = headers.indexOf('habit name');
       const grouped = {};
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+        const cols = parseCsvLine(lines[i]);
         const uname = usernameIdx >= 0 ? (cols[usernameIdx] || '(unknown)') : '(unknown)';
         const habit = cols[habitIdx] || '?';
         if (!grouped[uname]) grouped[uname] = new Set();
@@ -430,6 +480,7 @@ export default function AdminDashboard() {
               <li>• Every run (cron or manual) <strong>overwrites</strong> that one backup, so there's always exactly one latest per user — they never pile up</li>
               <li>• CSV files are stored in <strong>Supabase Storage</strong> (private bucket); MongoDB keeps only the file reference</li>
               <li>• Downloads use a short-lived signed link, so backups stay private</li>
+              <li>• Backups <strong>cannot be deleted from the app</strong> — an orphaned backup is a deleted account's only remaining copy. Cleanup, if ever needed, happens in the Supabase dashboard.</li>
               <li>• To restore: go to <strong>Backup & Restore</strong>, select a user, then download or restore</li>
               <li>• To import manually: go to <strong>CSV Upload</strong> and drop the backup file (format shown there)</li>
             </ul>
@@ -461,7 +512,14 @@ export default function AdminDashboard() {
                       </tr>
                     ))
                   : users.map((u) => (
-                      <UserRow key={u._id} u={u} currentUserId={user._id} onDelete={setDeleteTarget} />
+                      <UserRow
+                        key={u._id}
+                        u={u}
+                        currentUserId={user._id}
+                        onDelete={setDeleteTarget}
+                        onResetPassword={(target) => { setResetPassword(''); setResetTarget(target); }}
+                        onImpersonate={(target) => impersonateMutation.mutate(target._id)}
+                      />
                     ))}
               </tbody>
             </table>
@@ -562,10 +620,6 @@ export default function AdminDashboard() {
                         onClick={() => setRestoreTarget({ userId: selectedUserId, label })}>
                         Restore
                       </Button>
-                      <Button size="sm" variant="destructive" disabled={deleteBackupMutation.isPending}
-                        onClick={() => setDeleteBackupTarget({ userId: selectedUserId, label })}>
-                        🗑️
-                      </Button>
                     </div>
                   </div>
                 )}
@@ -606,10 +660,6 @@ export default function AdminDashboard() {
                         <Button size="sm" disabled={restoreMutation.isPending}
                           onClick={() => { setOrphanPassword(''); setOrphanTarget({ userId: b.userId, username: b.username }); }}>
                           ♻️ Recover
-                        </Button>
-                        <Button size="sm" variant="destructive" disabled={deleteBackupMutation.isPending}
-                          onClick={() => setDeleteBackupTarget({ userId: b.userId, label: `@${b.username || 'unknown'}` })}>
-                          🗑️
                         </Button>
                       </div>
                     </div>
@@ -761,21 +811,35 @@ export default function AdminDashboard() {
         isPending={restoreMutation.isPending}
       />
 
-      {/* Delete backup confirmation */}
-      <ConfirmDialog
-        open={!!deleteBackupTarget}
-        title="Delete backup?"
-        description={
-          deleteBackupTarget
-            ? `Permanently delete the backup for ${deleteBackupTarget.label}. This cannot be undone.`
-            : ''
-        }
-        confirmLabel="Delete"
-        variant="destructive"
-        onConfirm={() => deleteBackupMutation.mutate({ userId: deleteBackupTarget.userId })}
-        onClose={() => setDeleteBackupTarget(null)}
-        isPending={deleteBackupMutation.isPending}
-      />
+      {/* Reset a user's password */}
+      <Dialog open={!!resetTarget} onOpenChange={(v) => { if (!v && !resetPasswordMutation.isPending) setResetTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset password for @{resetTarget?.username}?</DialogTitle>
+            <DialogDescription>
+              Set a temporary password and share it with the user. They&apos;ll be required to
+              choose a new password the next time they sign in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-2">
+            <Input
+              type="text"
+              value={resetPassword}
+              onChange={(e) => setResetPassword(e.target.value)}
+              placeholder="Temporary password (min 6 chars)"
+            />
+          </div>
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setResetTarget(null)} disabled={resetPasswordMutation.isPending}>Cancel</Button>
+            <Button
+              onClick={() => resetPasswordMutation.mutate({ userId: resetTarget._id, username: resetTarget.username, tempPassword: resetPassword })}
+              disabled={resetPasswordMutation.isPending || resetPassword.length < 6}
+            >
+              {resetPasswordMutation.isPending ? 'Resetting…' : 'Reset password'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Recover a deleted account from its orphaned backup */}
       <Dialog open={!!orphanTarget} onOpenChange={(v) => { if (!v && !restoreMutation.isPending) setOrphanTarget(null); }}>

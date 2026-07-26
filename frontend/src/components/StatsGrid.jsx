@@ -34,7 +34,7 @@ export default function StatsGrid({ entries, trackingType }) {
         <StatCard value={totalDays} label="Days Tracked" color="var(--accent-color)" />
         <StatCard value={successDays} label="Completed" color="var(--success-color)" />
         <StatCard value={`${successRate}%`} label="Success Rate" color={rateColor} />
-        <StatCard value={longestStreak} label="Best Streak" color="#f59e0b" />
+        <StatCard value={longestStreak} label="Best Streak" color="var(--warning-color)" />
       </div>
     );
   }

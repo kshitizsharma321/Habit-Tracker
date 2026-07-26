@@ -1,6 +1,6 @@
 import { getSortedKeys, ewma } from './shared';
 import { parseStoredDate, getDateKey } from '../dates';
-import { getNumericStats, getNumericTrend, getZScoreAnomalies } from './numeric';
+import { getNumericStats, getNumericTrend, getZScoreAnomalies, isGoalMet } from './numeric';
 
 /**
  * Generate smart insights for a habit based on its tracking type and data.
@@ -19,11 +19,11 @@ export function getInsights(entries, definition) {
 
   const generator = insightGenerators[trackingType];
   if (generator) {
-    insights.push(...generator(entries, name));
+    insights.push(...generator(entries, name, goal));
   }
 
   // Day-of-week analysis (works for any type)
-  const dayInsight = _dayOfWeekInsight(entries, name, trackingType);
+  const dayInsight = _dayOfWeekInsight(entries, name, trackingType, goal);
   if (dayInsight) insights.push(dayInsight);
 
   // Goal progress
@@ -78,30 +78,46 @@ function _binaryInsights(entries, name) {
   return insights;
 }
 
-function _numericInsights(entries, name) {
+function _numericInsights(entries, name, goal) {
   const insights = [];
   const stats = getNumericStats(entries);
 
   if (stats.count < 3) return insights;
 
+  // For at_most (reduction) habits, LOWER values are success — every framing
+  // below flips accordingly.
+  const isReduction = goal?.direction === 'at_most';
+
   insights.push(`📊 Avg: ${stats.avg} | Min: ${stats.min} | Max: ${stats.max}`);
 
-  // Personal best via Z-score outlier detection
+  // Personal best via Z-score outlier detection — highest value for build-up
+  // habits, lowest for reduction habits.
   const anomalies = getZScoreAnomalies(entries);
-  const highs = anomalies.filter((a) => a.zScore > 0);
-  if (highs.length > 0) {
-    const best = highs.reduce((a, b) => (entries[a.date] > entries[b.date] ? a : b));
+  const bests = anomalies.filter((a) => (isReduction ? a.zScore < 0 : a.zScore > 0));
+  if (bests.length > 0) {
+    const best = bests.reduce((a, b) => {
+      const aWins = isReduction ? entries[a.date] < entries[b.date] : entries[a.date] > entries[b.date];
+      return aWins ? a : b;
+    });
     insights.push(`🌟 Personal best: ${entries[best.date]} on ${best.date}`);
   }
 
   const trend = getNumericTrend(entries);
   if (trend.direction === 'up') {
-    insights.push(`📈 "${name}" is trending up (+${trend.changePercent}%)`);
-    if (trend.forecast !== null) {
-      insights.push(`🔮 Based on your trend, you may reach ~${trend.forecast} within a week`);
+    if (isReduction) {
+      insights.push(`📈 "${name}" is creeping up (+${trend.changePercent}%) — time to rein it back in`);
+    } else {
+      insights.push(`📈 "${name}" is trending up (+${trend.changePercent}%)`);
+      if (trend.forecast !== null) {
+        insights.push(`🔮 Based on your trend, you may reach ~${trend.forecast} within a week`);
+      }
     }
   } else if (trend.direction === 'down') {
-    insights.push(`📉 "${name}" has been decreasing (${trend.changePercent}%) — time to push back!`);
+    if (isReduction) {
+      insights.push(`📉 "${name}" is coming down (${trend.changePercent}%) — great progress cutting back!`);
+    } else {
+      insights.push(`📉 "${name}" has been decreasing (${trend.changePercent}%) — time to push back!`);
+    }
   } else if (trend.direction === 'steady' && stats.count >= 7) {
     insights.push(`➡️ Steady performance on "${name}" — consistent effort pays off`);
   }
@@ -109,7 +125,7 @@ function _numericInsights(entries, name) {
   return insights;
 }
 
-function _dayOfWeekInsight(entries, name, trackingType) {
+function _dayOfWeekInsight(entries, name, trackingType, goal) {
   const keys = getSortedKeys(entries);
   if (keys.length < 14) return null;
 
@@ -125,7 +141,11 @@ function _dayOfWeekInsight(entries, name, trackingType) {
     if (trackingType === 'completion') {
       if (entries[key] === 'yes') dayMap[day]++;
     } else if (trackingType === 'quantity') {
-      if (typeof entries[key] === 'number' && entries[key] > 0) dayMap[day]++;
+      const v = entries[key];
+      if (typeof v !== 'number') continue;
+      // "Success" honors the goal + direction — a huge screen-time day is not a hit.
+      const success = goal?.value ? isGoalMet(v, goal.value, goal.direction) : v > 0;
+      if (success) dayMap[day]++;
     }
   }
 

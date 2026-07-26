@@ -11,13 +11,6 @@ export async function saveEntry(habitId, { date, value }) {
   });
 }
 
-export async function bulkSaveEntries(habitId, entries) {
-  return apiFetchJSON(`/habit-definitions/${habitId}/entries/bulk`, {
-    method: 'POST',
-    body: JSON.stringify({ entries }),
-  });
-}
-
 export async function deleteEntry(habitId, date) {
   return apiFetchJSON(`/habit-definitions/${habitId}/entries/${date}`, {
     method: 'DELETE',

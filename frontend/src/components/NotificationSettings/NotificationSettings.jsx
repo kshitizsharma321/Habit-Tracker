@@ -49,12 +49,6 @@ export default function NotificationSettings() {
     }
   };
 
-  const handleTimeChange = (e) => {
-    const t = e.target.value;
-    setLocalTime(t);
-    updateTime(t);
-  };
-
   const parsed = parseTime(localTime);
 
   return (

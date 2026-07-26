@@ -1,16 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Skeleton } from '../ui/skeleton';
 import { TYPE_LABELS } from '../../constants/habits';
 
-export default function HabitList({ definitions, startEdit, setDeleteTarget, loading, reorderHabits, isReordering }) {
+export default function HabitList({ definitions, startEdit, setDeleteTarget, loading, reorderHabits, isReordering, onToggleArchive }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState(definitions);
   const dragIndex = useRef(null);
   const [overIndex, setOverIndex] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   // Keep local order in sync with the source list (optimistic cache update / refetch).
   useEffect(() => { setItems(definitions); }, [definitions]);
+
+  const active = items.filter((d) => !d.archived);
+  const archived = items.filter((d) => d.archived);
 
   if (loading) {
     return (
@@ -32,9 +38,11 @@ export default function HabitList({ definitions, startEdit, setDeleteTarget, loa
     return <p className="text-muted-foreground text-sm text-center py-8 mt-4">No habits yet.</p>;
   }
 
-  const commit = (next) => {
-    setItems(next);
-    reorderHabits?.(next.map((d) => d._id));
+  // The reorder endpoint requires EVERY habit id exactly once — reordering only
+  // touches active habits, so archived ids are appended in their current order.
+  const commit = (nextActive) => {
+    setItems([...nextActive, ...archived]);
+    reorderHabits?.([...nextActive.map((d) => d._id), ...archived.map((d) => d._id)]);
   };
 
   const handleDrop = (dropIndex) => {
@@ -42,7 +50,7 @@ export default function HabitList({ definitions, startEdit, setDeleteTarget, loa
     dragIndex.current = null;
     setOverIndex(null);
     if (from == null || from === dropIndex) return;
-    const next = [...items];
+    const next = [...active];
     const [moved] = next.splice(from, 1);
     next.splice(dropIndex, 0, moved);
     commit(next);
@@ -51,15 +59,26 @@ export default function HabitList({ definitions, startEdit, setDeleteTarget, loa
   // Touch fallback — HTML5 drag-and-drop doesn't fire on touch devices.
   const move = (index, dir) => {
     const target = index + dir;
-    if (target < 0 || target >= items.length) return;
-    const next = [...items];
+    if (target < 0 || target >= active.length) return;
+    const next = [...active];
     [next[index], next[target]] = [next[target], next[index]];
     commit(next);
   };
 
+  const openDetail = (def) => {
+    sessionStorage.setItem('ht_active_habit', def._id);
+    navigate('/detail');
+  };
+
   return (
     <div className="space-y-2 mt-4">
-      {items.map((def, i) => (
+      {active.length === 0 && (
+        <p className="text-muted-foreground text-sm text-center py-6">
+          All habits are archived — unarchive one below to start tracking again.
+        </p>
+      )}
+
+      {active.map((def, i) => (
         <Card
           key={def._id}
           draggable={!isReordering}
@@ -101,9 +120,14 @@ export default function HabitList({ definitions, startEdit, setDeleteTarget, loa
             >↑</Button>
             <Button
               size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground"
-              disabled={i === items.length - 1 || isReordering}
+              disabled={i === active.length - 1 || isReordering}
               onClick={() => move(i, 1)} aria-label="Move down"
             >↓</Button>
+            <Button
+              size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground"
+              onClick={() => onToggleArchive?.(def)} aria-label="Archive habit"
+              title="Archive — hides from daily tracking, keeps all history"
+            >📥</Button>
             <Button
               size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive"
               onClick={() => setDeleteTarget(def)} aria-label="Delete habit"
@@ -111,9 +135,61 @@ export default function HabitList({ definitions, startEdit, setDeleteTarget, loa
           </div>
         </Card>
       ))}
-      <p className="text-xs text-center text-muted-foreground pt-1">
-        Drag the ⠿ handle (or use ↑ ↓) to reorder — changes save automatically.
-      </p>
+
+      {active.length > 0 && (
+        <p className="text-xs text-center text-muted-foreground pt-1">
+          Drag the ⠿ handle (or use ↑ ↓) to reorder — changes save automatically.
+        </p>
+      )}
+
+      {/* ── Archived section ─────────────────────────────────────────── */}
+      {archived.length > 0 && (
+        <div className="pt-4">
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            aria-expanded={showArchived}
+          >
+            <span>{showArchived ? '▾' : '▸'}</span>
+            🗃️ Archived ({archived.length})
+          </button>
+
+          {showArchived && (
+            <div className="space-y-2 mt-2">
+              {archived.map((def) => (
+                <Card key={def._id} className="p-3 flex items-center justify-between gap-2 opacity-70">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className="text-xl shrink-0 grayscale">{def.icon}</span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground truncate">{def.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {TYPE_LABELS[def.trackingType]} · archived — history preserved
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <Button
+                      size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground"
+                      onClick={() => openDetail(def)} aria-label="View history"
+                      title="View stats & history"
+                    >📊</Button>
+                    <Button
+                      size="sm" variant="ghost" className="text-muted-foreground"
+                      onClick={() => onToggleArchive?.(def)} aria-label="Unarchive habit"
+                      title="Unarchive — back to daily tracking"
+                    >📤 Restore</Button>
+                    <Button
+                      size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setDeleteTarget(def)} aria-label="Delete habit"
+                    >✕</Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

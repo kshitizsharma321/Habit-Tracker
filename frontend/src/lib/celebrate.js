@@ -21,14 +21,17 @@ function fireworks(duration = 1400) {
  * Celebrate a streak milestone — once per milestone per habit, but again on
  * subsequent logins the same day. Returns true if a celebration was shown.
  *
+ * Keys are scoped by userId so accounts sharing a browser don't suppress each
+ * other's celebrations.
+ *
  * Persistence:
- *   localStorage   ht_milestone_<habit>_<m>      = the date the milestone was first reached (permanent)
- *   sessionStorage ht_milestone_seen_<habit>_<m> = shown during this login session
+ *   localStorage   ht_milestone_<user>_<habit>_<m>      = date first reached (permanent)
+ *   sessionStorage ht_milestone_seen_<user>_<habit>_<m> = shown during this login session
  */
-export function celebrateMilestone({ habitId, habitName, milestone }) {
+export function celebrateMilestone({ userId = '', habitId, habitName, milestone }) {
   const today = getDateKey(new Date());
-  const permKey = `ht_milestone_${habitId}_${milestone}`;
-  const sessKey = `ht_milestone_seen_${habitId}_${milestone}`;
+  const permKey = `ht_milestone_${userId}_${habitId}_${milestone}`;
+  const sessKey = `ht_milestone_seen_${userId}_${habitId}_${milestone}`;
   const reachedOn = localStorage.getItem(permKey);
   const seenThisSession = sessionStorage.getItem(sessKey);
 

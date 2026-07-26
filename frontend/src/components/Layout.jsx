@@ -1,9 +1,34 @@
 import { useEffect } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useHabitDefinitions } from '../hooks/useHabitDefinitions';
+import { setToken } from '../api/client';
 import ProfileDropdown from './ProfileDropdown';
 import LoadingScreen from './LoadingScreen';
+
+// While an admin is impersonating a user, their real token is stashed here.
+function ImpersonationBanner({ username }) {
+  const returnToAdmin = () => {
+    const adminToken = sessionStorage.getItem('ht_admin_token');
+    sessionStorage.removeItem('ht_admin_token');
+    if (adminToken) setToken(adminToken);
+    window.location.href = '/admin';
+  };
+  return (
+    <div
+      className="sticky top-0 z-50 flex items-center justify-center gap-3 px-4 py-2 text-sm font-medium text-white"
+      style={{ background: 'var(--accent-color)' }}
+    >
+      <span>👁 Viewing as @{username}</span>
+      <button
+        onClick={returnToAdmin}
+        className="underline underline-offset-2 hover:opacity-80"
+      >
+        Return to admin
+      </button>
+    </div>
+  );
+}
 
 const HABIT_NAV = [
   { to: '/', label: 'Track', icon: '✅' },
@@ -22,8 +47,8 @@ export default function Layout() {
 
   const {
     definitions, isLoading: defsLoading,
-    createHabit, isCreating, bulkCreateHabits,
-    updateHabit, isUpdating, deleteHabit, isDeleting,
+    createHabit, createHabitAsync, isCreating, bulkCreateHabits,
+    updateHabit, updateHabitAsync, isUpdating, deleteHabit, isDeleting,
     reorderHabits, isReordering,
   } = useHabitDefinitions();
 
@@ -38,12 +63,14 @@ export default function Layout() {
   }, [user, location.pathname, navigate]);
 
   if (loading) return <LoadingScreen message="Checking authentication" />;
-  if (!user) { navigate('/login'); return null; }
+  if (!user) return <Navigate to="/login" replace />;
 
   const navItems = user.isAdmin ? ADMIN_NAV : HABIT_NAV;
+  const isImpersonating = !!sessionStorage.getItem('ht_admin_token');
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {isImpersonating && <ImpersonationBanner username={user.username} />}
       {/* Header — max-w matches page content */}
       <header className="sticky top-0 z-40 bg-card border-b shadow-sm">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
@@ -81,8 +108,8 @@ export default function Layout() {
         <Outlet
           context={{
             definitions, defsLoading,
-            createHabit, isCreating, bulkCreateHabits,
-            updateHabit, isUpdating, deleteHabit, isDeleting,
+            createHabit, createHabitAsync, isCreating, bulkCreateHabits,
+            updateHabit, updateHabitAsync, isUpdating, deleteHabit, isDeleting,
             reorderHabits, isReordering,
           }}
         />

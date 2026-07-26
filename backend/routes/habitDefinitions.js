@@ -3,8 +3,21 @@ const router = express.Router();
 const HabitDefinition = require('../models/HabitDefinition');
 const Habit = require('../models/Habit');
 const { requireAuth } = require('../middleware/auth');
+const { validateObjectId } = require('../middleware/validateObjectId');
+const { getISTDateKey, isValidDateKey, DAY_MS } = require('../lib/dates');
+const { normalizeEntryValue } = require('../lib/validate');
+const { calculateCurrentStreak, calculateSuccessRate } = require('../lib/streaks');
+const { sendError } = require('../lib/errors');
 
 const { TRACKING_TYPES } = require('../models/HabitDefinition');
+
+const NAME_MAX_LENGTH = 60;
+
+function validateName(name) {
+  if (!name || !name.trim()) return 'Name is required';
+  if (name.trim().length > NAME_MAX_LENGTH) return `Name must be at most ${NAME_MAX_LENGTH} characters`;
+  return null;
+}
 
 // ── GET / — list all definitions ───────────────────────────────────────
 
@@ -13,7 +26,7 @@ router.get('/', requireAuth, async (req, res) => {
     const definitions = await HabitDefinition.find({ userId: req.user._id }).sort({ order: 1 });
     res.json(definitions);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch habit definitions', message: error.message });
+    sendError(res, 500, 'Failed to fetch habit definitions', error);
   }
 });
 
@@ -23,10 +36,9 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     const { name, trackingType, unit, goal, color, icon } = req.body;
 
-    if (!name || !trackingType) {
-      return res.status(400).json({ error: 'Name and trackingType are required' });
-    }
-    if (!TRACKING_TYPES.includes(trackingType)) {
+    const nameError = validateName(name);
+    if (nameError) return res.status(400).json({ error: nameError });
+    if (!trackingType || !TRACKING_TYPES.includes(trackingType)) {
       return res.status(400).json({ error: `trackingType must be one of: ${TRACKING_TYPES.join(', ')}` });
     }
 
@@ -61,11 +73,11 @@ router.post('/', requireAuth, async (req, res) => {
 
     res.status(201).json(definition);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create habit', message: error.message });
+    sendError(res, 500, 'Failed to create habit', error);
   }
 });
 
-// ── POST /bulk ─────────────────────────────────────────────────────────
+// ── POST /bulk — bulk create definitions (onboarding) ──────────────────
 
 router.post('/bulk', requireAuth, async (req, res) => {
   try {
@@ -80,18 +92,31 @@ router.post('/bulk', requireAuth, async (req, res) => {
 
     const created = [];
     for (const h of habits) {
-      if (!h.name || !h.trackingType || !TRACKING_TYPES.includes(h.trackingType)) continue;
+      if (validateName(h.name) || !h.trackingType || !TRACKING_TYPES.includes(h.trackingType)) continue;
       const nameKey = h.name.trim().toLowerCase();
       if (seenNames.has(nameKey)) continue;
+
+      // Same goal rules as single create: quantity requires a positive goal.
+      let goalData;
+      if (h.trackingType === 'quantity') {
+        const goalValue = Number(h.goal?.value);
+        if (!goalValue || !isFinite(goalValue) || goalValue <= 0) continue;
+        goalData = {
+          enabled: true,
+          value: Math.round(goalValue * 100) / 100,
+          direction: h.goal?.direction === 'at_most' ? 'at_most' : 'at_least',
+        };
+      } else {
+        goalData = { enabled: false, value: 1 };
+      }
+
       seenNames.add(nameKey);
       const def = await HabitDefinition.create({
         userId: req.user._id,
         name: h.name,
         trackingType: h.trackingType,
-        unit: h.trackingType === 'quantity' ? (h.unit || '') : undefined,
-        goal: h.goal?.enabled
-          ? { enabled: true, value: h.goal.value, direction: h.goal.direction === 'at_most' ? 'at_most' : 'at_least' }
-          : undefined,
+        unit: h.trackingType === 'quantity' ? (h.unit || '') : '',
+        goal: goalData,
         color: h.color || '#22c55e',
         icon: h.icon || '📌',
       });
@@ -100,42 +125,54 @@ router.post('/bulk', requireAuth, async (req, res) => {
 
     res.status(201).json({ count: created.length, habits: created });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to bulk create habits', message: error.message });
+    sendError(res, 500, 'Failed to bulk create habits', error);
   }
 });
 
-// ── GET /dashboard — today's entries for all habits ─────────────────────
+// ── GET /dashboard — today + recent entries + current streaks ───────────
+// The habit list itself is loaded separately via GET /habit-definitions (cached
+// app-wide). Entries are windowed to 60 days to keep the payload small, but
+// streaks are computed here over the FULL history so they are never capped by
+// the window (a 90-day streak must not display as 60).
 
 router.get('/dashboard', requireAuth, async (req, res) => {
   try {
-    // The habit list itself is loaded separately via GET /habit-definitions (cached app-wide),
-    // so the dashboard only needs entries. One query for the last 60 days covers both today's
-    // entries and the backdate lookup window — no definitions round-trip, no defIds filter.
-    const today = new Date();
-    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const todayKey = getISTDateKey();
+    const fromKey = getISTDateKey(new Date(Date.now() - 60 * DAY_MS));
 
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const fromKey = `${sixtyDaysAgo.getFullYear()}-${String(sixtyDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sixtyDaysAgo.getDate()).padStart(2, '0')}`;
+    const [definitions, allRows] = await Promise.all([
+      HabitDefinition.find({ userId: req.user._id }),
+      Habit.find({ userId: req.user._id }).select('habitId date value').lean(),
+    ]);
 
-    const recentEntries = await Habit.find({
-      userId: req.user._id,
-      date: { $gte: fromKey },
-    });
-
+    const entryMaps = {}; // habitId -> { date: value } — full history, for streaks
     const todayEntries = {};
-    const allEntries = {};
-    recentEntries.forEach((h) => {
-      const hid = h.habitId?.toString();
-      if (!hid) return; // skip orphaned entries with no habit reference
-      if (!allEntries[hid]) allEntries[hid] = {};
-      allEntries[hid][h.date] = { value: h.value };
-      if (h.date === todayKey) todayEntries[hid] = { value: h.value };
-    });
+    const allEntries = {}; // habitId -> { date: { value } } — 60-day window, for the UI
+    for (const row of allRows) {
+      const hid = row.habitId?.toString();
+      if (!hid) continue; // skip orphaned entries with no habit reference
+      (entryMaps[hid] ??= {})[row.date] = row.value;
+      if (row.date >= fromKey) {
+        (allEntries[hid] ??= {})[row.date] = { value: row.value };
+      }
+      if (row.date === todayKey) todayEntries[hid] = { value: row.value };
+    }
 
-    res.json({ todayEntries, allEntries });
+    // Both computed over FULL history — the 60-day `allEntries` window is for
+    // rendering only. Deriving these client-side from that window would cap
+    // streaks at 60 days and quietly turn "all-time success rate" into
+    // "last 60 days", disagreeing with the Detail page's all-time number.
+    const streaks = {};
+    const successRates = {};
+    for (const def of definitions) {
+      const map = entryMaps[def._id.toString()] ?? {};
+      streaks[def._id] = calculateCurrentStreak(map, def);
+      successRates[def._id] = calculateSuccessRate(map, def);
+    }
+
+    res.json({ todayEntries, allEntries, streaks, successRates });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to load dashboard', message: error.message });
+    sendError(res, 500, 'Failed to load dashboard', error);
   }
 });
 
@@ -146,6 +183,16 @@ router.put('/reorder', requireAuth, async (req, res) => {
     const { orderedIds } = req.body;
     if (!Array.isArray(orderedIds)) {
       return res.status(400).json({ error: 'orderedIds array is required' });
+    }
+
+    // The list must be exactly the user's definitions — a partial or duplicated
+    // list would silently corrupt the ordering.
+    const ownIds = await HabitDefinition.find({ userId: req.user._id }).distinct('_id');
+    const ownSet = new Set(ownIds.map(String));
+    const sentSet = new Set(orderedIds.map(String));
+    if (sentSet.size !== orderedIds.length || sentSet.size !== ownSet.size ||
+        [...sentSet].some((id) => !ownSet.has(id))) {
+      return res.status(400).json({ error: 'orderedIds must contain each of your habit ids exactly once' });
     }
 
     const bulkOps = orderedIds.map((id, index) => ({
@@ -159,30 +206,31 @@ router.put('/reorder', requireAuth, async (req, res) => {
     const definitions = await HabitDefinition.find({ userId: req.user._id }).sort({ order: 1 });
     res.json(definitions);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to reorder habits', message: error.message });
+    sendError(res, 500, 'Failed to reorder habits', error);
   }
 });
 
 // ── PUT /:id — update a habit definition ───────────────────────────────
+// trackingType is deliberately NOT updatable — it is locked after creation
+// (entries of the other type would be stranded without conversion).
 
-router.put('/:id', requireAuth, async (req, res) => {
+router.put('/:id', requireAuth, validateObjectId(), async (req, res) => {
   try {
     const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
     if (!def) return res.status(404).json({ error: 'Habit not found' });
 
     const updates = {};
-    const fields = ['name', 'trackingType', 'unit', 'goal', 'color', 'icon'];
+    const fields = ['name', 'unit', 'goal', 'color', 'icon', 'archived'];
     for (const field of fields) {
       if (req.body[field] !== undefined) {
         updates[field] = req.body[field];
       }
     }
+    if (updates.archived !== undefined) updates.archived = !!updates.archived;
 
-    if (updates.trackingType && !TRACKING_TYPES.includes(updates.trackingType)) {
-      return res.status(400).json({ error: `trackingType must be one of: ${TRACKING_TYPES.join(', ')}` });
-    }
-
-    if (updates.name) {
+    if (updates.name !== undefined) {
+      const nameError = validateName(updates.name);
+      if (nameError) return res.status(400).json({ error: nameError });
       const duplicate = await HabitDefinition.findOne({
         userId: req.user._id,
         name: updates.name.trim(),
@@ -194,9 +242,8 @@ router.put('/:id', requireAuth, async (req, res) => {
     }
 
     // Enforce goal rules on update
-    const effectiveType = updates.trackingType || def.trackingType;
     if (updates.goal) {
-      if (effectiveType === 'quantity') {
+      if (def.trackingType === 'quantity') {
         const goalValue = Number(updates.goal.value);
         if (!goalValue || !isFinite(goalValue) || goalValue <= 0) {
           return res.status(400).json({ error: 'Quantity habits require a positive goal value' });
@@ -213,13 +260,13 @@ router.put('/:id', requireAuth, async (req, res) => {
     await def.save();
     res.json(def);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to update habit', message: error.message });
+    sendError(res, 500, 'Failed to update habit', error);
   }
 });
 
 // ── DELETE /:id ────────────────────────────────────────────────────────
 
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', requireAuth, validateObjectId(), async (req, res) => {
   try {
     const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
     if (!def) return res.status(404).json({ error: 'Habit not found' });
@@ -230,13 +277,13 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
     res.json({ success: true, deletedEntries: entryCount });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete habit', message: error.message });
+    sendError(res, 500, 'Failed to delete habit', error);
   }
 });
 
 // ── Entry routes ───────────────────────────────────────────────────────
 
-router.get('/:id/entries', requireAuth, async (req, res) => {
+router.get('/:id/entries', requireAuth, validateObjectId(), async (req, res) => {
   try {
     const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
     if (!def) return res.status(404).json({ error: 'Habit not found' });
@@ -248,11 +295,11 @@ router.get('/:id/entries', requireAuth, async (req, res) => {
     });
     res.json(data);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch entries', message: error.message });
+    sendError(res, 500, 'Failed to fetch entries', error);
   }
 });
 
-router.post('/:id/entries', requireAuth, async (req, res) => {
+router.post('/:id/entries', requireAuth, validateObjectId(), async (req, res) => {
   try {
     const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
     if (!def) return res.status(404).json({ error: 'Habit not found' });
@@ -261,72 +308,47 @@ router.post('/:id/entries', requireAuth, async (req, res) => {
     if (!date || value === undefined || value === null) {
       return res.status(400).json({ error: 'Date and value are required' });
     }
-
-    let finalValue = value;
-    if (def.trackingType === 'completion') {
-      if (!['yes', 'no'].includes(value)) {
-        return res.status(400).json({ error: 'Completion habits require "yes" or "no"' });
-      }
-    } else if (def.trackingType === 'quantity') {
-      if (typeof value !== 'number' || !isFinite(value) || value < 0) {
-        return res.status(400).json({ error: 'Quantity habits require a non-negative number' });
-      }
-      finalValue = Math.round(value * 100) / 100;
+    if (!isValidDateKey(date)) {
+      return res.status(400).json({ error: 'Date must be a valid YYYY-MM-DD key' });
     }
+    if (date > getISTDateKey()) {
+      return res.status(400).json({ error: 'Cannot log entries for future dates' });
+    }
+
+    const normalized = normalizeEntryValue(def.trackingType, value);
+    if (!normalized.ok) return res.status(400).json({ error: normalized.error });
 
     const entry = await Habit.findOneAndUpdate(
       { userId: req.user._id, habitId: def._id, date },
-      { value: finalValue },
+      { value: normalized.value },
       { new: true, upsert: true },
     );
 
-    res.json({ success: true, entry });
+    // Return the fresh streak so the client can display/celebrate without
+    // recomputing from its (60-day-windowed) dashboard cache.
+    const rows = await Habit.find({ habitId: def._id, userId: req.user._id }).select('date value').lean();
+    const entryMap = {};
+    for (const row of rows) entryMap[row.date] = row.value;
+    const currentStreak = calculateCurrentStreak(entryMap, def);
+
+    res.json({ success: true, entry, currentStreak });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to save entry', message: error.message });
+    sendError(res, 500, 'Failed to save entry', error);
   }
 });
 
-router.post('/:id/entries/bulk', requireAuth, async (req, res) => {
+router.delete('/:id/entries/:date', requireAuth, validateObjectId(), async (req, res) => {
   try {
-    const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
-    if (!def) return res.status(404).json({ error: 'Habit not found' });
-
-    const { entries } = req.body;
-    if (!Array.isArray(entries) || entries.length === 0) {
-      return res.status(400).json({ error: 'entries array is required' });
+    if (!isValidDateKey(req.params.date)) {
+      return res.status(400).json({ error: 'Date must be a valid YYYY-MM-DD key' });
     }
-
-    const operations = entries.map((e) => ({
-      updateOne: {
-        filter: { userId: req.user._id, habitId: def._id, date: e.date },
-        update: { value: e.value },
-        upsert: true,
-      },
-    }));
-
-    let processed = 0;
-    const CHUNK = 50;
-    for (let i = 0; i < operations.length; i += CHUNK) {
-      const chunk = operations.slice(i, i + CHUNK);
-      await Habit.bulkWrite(chunk);
-      processed += chunk.length;
-    }
-
-    res.json({ success: true, count: processed });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to bulk save entries', message: error.message });
-  }
-});
-
-router.delete('/:id/entries/:date', requireAuth, async (req, res) => {
-  try {
     const def = await HabitDefinition.findOne({ _id: req.params.id, userId: req.user._id });
     if (!def) return res.status(404).json({ error: 'Habit not found' });
 
     await Habit.findOneAndDelete({ userId: req.user._id, habitId: def._id, date: req.params.date });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete entry', message: error.message });
+    sendError(res, 500, 'Failed to delete entry', error);
   }
 });
 

@@ -2,11 +2,10 @@ import { useMemo } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchDashboard } from '../api/habitDefinitionsApi';
+import { fetchAiDigest } from '../api/insightsApi';
 import { useAuth } from '../contexts/AuthContext';
 import { getDateKey } from '../utils/dates';
-import {
-  calculateStreaksFromGoal, getBinaryStats, getInsights, isGoalMet, fillMissingDays,
-} from '../utils/stats';
+import { getInsights, isGoalMet, fillMissingDays } from '../utils/stats';
 import { Button } from '../components/ui/button';
 import { Skeleton } from '../components/ui/skeleton';
 
@@ -77,10 +76,12 @@ function HighlightCard({ title, accent, habit, line }) {
 }
 
 export default function DashboardPage() {
-  const { definitions, defsLoading } = useOutletContext();
+  const { definitions: allDefinitions, defsLoading } = useOutletContext();
   const { user } = useAuth();
   const navigate = useNavigate();
   const todayKey = getDateKey(new Date());
+  // Archived habits keep their history but leave the daily views.
+  const definitions = useMemo(() => allDefinitions.filter((d) => !d.archived), [allDefinitions]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
@@ -88,35 +89,39 @@ export default function DashboardPage() {
     staleTime: 1000 * 60,
   });
   const allEntries = data?.allEntries || {};
+  // Both server-computed over FULL history — never capped by the 60-day entry
+  // window that allEntries carries for rendering.
+  const serverStreaks = data?.streaks || {};
+  const serverSuccessRates = data?.successRates || {};
 
   const stats = useMemo(() => definitions.map((def) => {
     const entries = flatten(allEntries[def._id]);
     const direction = def.goal?.direction || 'at_least';
     const goalValue = def.goal?.value;
     const loggedDays = Object.keys(entries).length;
-    let currentStreak = 0, successRate = 0, loggedToday = false;
+    const currentStreak = serverStreaks[def._id] ?? 0;
+    // All-time, from the server. Computing it from `entries` here would only
+    // ever see the last 60 days and contradict the Detail page.
+    const successRate = serverSuccessRates[def._id] ?? 0;
+    let loggedToday = false, insightEntries = entries;
 
     if (def.trackingType === 'completion') {
       const filled = fillMissingDays(entries);
-      const bs = getBinaryStats(filled);
-      currentStreak = bs.currentStreak;
-      successRate = bs.successRate;
       loggedToday = entries[todayKey] === 'yes';
+      insightEntries = filled;
     } else {
-      currentStreak = goalValue ? calculateStreaksFromGoal(entries, goalValue, direction).currentStreak : 0;
-      const vals = Object.values(entries).filter((v) => typeof v === 'number');
-      const met = vals.filter((v) => isGoalMet(v, goalValue, direction)).length;
-      successRate = vals.length ? Math.round((met / vals.length) * 100) : 0;
       loggedToday = typeof entries[todayKey] === 'number' && isGoalMet(entries[todayKey], goalValue, direction);
     }
-    return { def, entries, currentStreak, successRate, loggedToday, loggedDays };
-  }), [definitions, allEntries, todayKey]);
+    return { def, entries, insightEntries, currentStreak, successRate, loggedToday, loggedDays };
+  }), [definitions, allEntries, serverStreaks, serverSuccessRates, todayKey]);
 
   const totalHabits = stats.length;
   const doneToday = stats.filter((s) => s.loggedToday).length;
   const todayRatio = totalHabits ? doneToday / totalHabits : 0;
   const activeStreaks = stats.filter((s) => s.currentStreak > 0).length;
-  const longest = stats.reduce((a, s) => (s.currentStreak > (a?.currentStreak || 0) ? s : a), null);
+  // The habit with the highest CURRENT streak — not an all-time record. The
+  // chip is labelled accordingly so the number can't be misread.
+  const bestActive = stats.reduce((a, s) => (s.currentStreak > (a?.currentStreak || 0) ? s : a), null);
   const withData = stats.filter((s) => s.loggedDays >= 3);
   const topPerformer = withData.slice().sort((a, b) => b.currentStreak - a.currentStreak || b.successRate - a.successRate)[0];
   const needsAttention = withData.slice().sort((a, b) => a.successRate - b.successRate || a.currentStreak - b.currentStreak)[0];
@@ -125,12 +130,21 @@ export default function DashboardPage() {
     const out = [];
     for (const s of stats) {
       if (s.loggedDays < 3) continue;
-      const ins = getInsights(s.entries, s.def);
+      const ins = getInsights(s.insightEntries, s.def);
       if (ins[0]) out.push({ habit: s.def, text: ins[0] });
       if (out.length >= 4) break;
     }
     return out;
   }, [stats]);
+
+  // AI-written daily digest — replaces the rule-based list when available;
+  // on null (unconfigured / quota / error) the rule-based digest stays.
+  const { data: aiDigest } = useQuery({
+    queryKey: ['ai-digest'],
+    queryFn: fetchAiDigest,
+    staleTime: 1000 * 60 * 60,
+    enabled: definitions.length > 0,
+  });
 
   const g = greeting();
   const name = user?.name || user?.username || 'there';
@@ -181,8 +195,8 @@ export default function DashboardPage() {
           <StatChip icon="🔥" value={activeStreaks} label="Active streaks" />
           <StatChip
             icon="🏅"
-            value={longest?.currentStreak || 0}
-            label={longest?.currentStreak ? `Best: ${longest.def.name}` : 'Longest streak'}
+            value={bestActive?.currentStreak || 0}
+            label={bestActive?.currentStreak ? `Best: ${bestActive.def.name}` : 'Best streak now'}
           />
         </div>
       </div>
@@ -197,30 +211,45 @@ export default function DashboardPage() {
           {needsAttention && topPerformer && needsAttention.def._id !== topPerformer.def._id && (
             <HighlightCard
               title="🌱 Needs attention" accent="var(--accent-color)" habit={needsAttention.def}
-              line={`${needsAttention.successRate}% lately — pick it back up today`}
+              line={`${needsAttention.successRate}% success rate — pick it back up today`}
             />
           )}
         </div>
       )}
 
-      {/* Insights digest */}
-      {digest.length > 0 && (
+      {/* Insights digest — AI-written when available, rule-based otherwise */}
+      {(aiDigest?.text || digest.length > 0) && (
         <div className="ht-card p-5">
           <div className="flex items-center gap-2 mb-3">
-            <span className="text-xl">💡</span>
-            <h3 className="font-semibold text-base" style={{ color: 'var(--text-primary)' }}>Insights</h3>
+            <span className="text-xl">{aiDigest?.text ? '🤖' : '💡'}</span>
+            <h3 className="font-semibold text-base" style={{ color: 'var(--text-primary)' }}>
+              {aiDigest?.text ? "Today's digest" : 'Insights'}
+            </h3>
           </div>
-          <div className="flex flex-col gap-2">
-            {digest.map((d, i) => (
-              <div key={i} className="flex items-start gap-2.5 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}>
-                <span className="text-lg shrink-0">{d.habit.icon}</span>
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold" style={{ color: d.habit.color }}>{d.habit.name}</p>
-                  <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{d.text}</p>
+          {aiDigest?.text ? (
+            <p
+              className="text-sm leading-relaxed p-3 rounded-xl"
+              style={{
+                color: 'var(--text-primary)',
+                background: 'color-mix(in srgb, var(--accent-color) 6%, var(--bg-secondary))',
+                border: '1px solid color-mix(in srgb, var(--accent-color) 22%, var(--border-color))',
+              }}
+            >
+              {aiDigest.text}
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {digest.map((d, i) => (
+                <div key={i} className="flex items-start gap-2.5 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)' }}>
+                  <span className="text-lg shrink-0">{d.habit.icon}</span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold" style={{ color: d.habit.color }}>{d.habit.name}</p>
+                    <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{d.text}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

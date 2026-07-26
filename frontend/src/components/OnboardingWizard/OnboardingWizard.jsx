@@ -31,7 +31,7 @@ export default function OnboardingWizard({ onComplete }) {
           color: t.color,
           icon: t.icon,
           goal: t.type === 'quantity'
-            ? { enabled: true, value: t.goal?.value ?? 1 }
+            ? { enabled: true, value: t.goal?.value ?? 1, direction: t.goal?.direction ?? 'at_least' }
             : { enabled: false, value: 1 },
         })));
       }

@@ -37,6 +37,12 @@ const habitDefinitionSchema = new mongoose.Schema({
     type: goalSchema,
     default: () => ({}),
   },
+  // Archived habits keep all history but are hidden from Track/Dashboard,
+  // reminders, and digests. Distinct from deletion — fully reversible.
+  archived: {
+    type: Boolean,
+    default: false,
+  },
   order: {
     type: Number,
     default: 0,

@@ -14,8 +14,11 @@ import ManagePage from './pages/ManagePage';
 import SettingsPage from './pages/SettingsPage';
 import AdminDashboard from './pages/AdminDashboard';
 import OnboardingWizard from './components/OnboardingWizard/OnboardingWizard';
+import ForcePasswordChange from './components/ForcePasswordChange';
 import LoginPage from './components/LoginPage';
 import RegisterPage from './components/RegisterPage';
+import ForgotPasswordPage from './components/ForgotPasswordPage';
+import ResetPasswordPage from './components/ResetPasswordPage';
 import LoadingScreen from './components/LoadingScreen';
 
 const queryClient = new QueryClient({
@@ -39,17 +42,23 @@ function AuthGate({ children }) {
 
   if (loading) return <LoadingScreen message="Checking authentication" />;
   if (!user) {
-    return authPage === 'login' ? (
-      <LoginPage onSwitch={() => setAuthPage('register')} />
-    ) : (
-      <RegisterPage onSwitch={() => setAuthPage('login')} />
+    if (authPage === 'register') return <RegisterPage onSwitch={() => setAuthPage('login')} />;
+    if (authPage === 'forgot') return <ForgotPasswordPage onBack={() => setAuthPage('login')} />;
+    return (
+      <LoginPage
+        onSwitch={() => setAuthPage('register')}
+        onForgot={() => setAuthPage('forgot')}
+      />
     );
   }
   return children;
 }
 
 function OnboardingGate() {
+  const { user } = useAuth();
   const { isOnboarded, skipOnboarding } = useOnboarding();
+  // Admin password reset forces a new password before anything else.
+  if (user?.mustChangePassword) return <ForcePasswordChange />;
   if (!isOnboarded) return <OnboardingWizard onComplete={skipOnboarding} />;
   return <Layout />;
 }
@@ -65,6 +74,8 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<AuthGate><Navigate to="/" replace /></AuthGate>} />
               <Route path="/register" element={<AuthGate><Navigate to="/" replace /></AuthGate>} />
+              {/* Emailed reset-link landing page — must work logged out, so no AuthGate */}
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/onboarding" element={<AuthGate><OnboardingGate /></AuthGate>} />
 
               <Route element={<AuthGate><OnboardingGate /></AuthGate>}>

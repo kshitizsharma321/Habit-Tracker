@@ -20,9 +20,11 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true,
   },
+  // Google-only accounts have no password at all — login's "use Google Sign-In"
+  // branch and the Settings password section both key off its absence.
   password: {
     type: String,
-    required: true,
+    required: function () { return !this.googleId; },
     minlength: 6,
   },
   name: {
@@ -38,6 +40,12 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // Set by an admin password reset — forces a new password on next login
+  // (PUT /auth/password accepts the change without currentPassword while set).
+  mustChangePassword: {
+    type: Boolean,
+    default: false,
+  },
   isAdmin: {
     type: Boolean,
     default: false,
@@ -45,12 +53,13 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+  if (!this.isModified('password') || !this.password) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
+  if (!this.password) return false;
   return bcrypt.compare(candidatePassword, this.password);
 };
 
