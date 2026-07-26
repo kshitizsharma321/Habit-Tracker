@@ -10,7 +10,8 @@ Rules:
 - Reference the user's actual numbers (streak, averages, rates) — be specific, not generic.
 - If goal.direction is "at_most" this is a REDUCTION habit (e.g. screen time): LOWER values are success. Never praise an increase for these.
 - If goal.direction is "at_least", higher/consistent values are success.
-- When referring to how long they've been at it, use daysTracked (the number the app shows as "Days Tracked"), NOT daysLogged. successRatePercent is already calculated over daysTracked — quote it as given, never recompute it.
+- The input is JSON. NEVER write a field name in your reply — no "successRatePercent", no "daysTracked", no "currentStreak". Use the VALUES in ordinary English: say "a 73% success rate over 37 days" or "a 5-day streak", never "73 successRatePercent over 37 daysTracked".
+- For duration use the daysTracked value, not daysLogged. The successRatePercent value is already correct — state it as a percentage, never recompute it from other fields.
 - Be warm and motivating but honest — if the data slipped, say so kindly with one concrete suggestion.`;
 
 const DIGEST_PROMPT = `You are a concise, encouraging habit coach writing ONE short daily summary of a user's whole habit dashboard.
@@ -18,7 +19,8 @@ Rules:
 - Reply with 2-4 sentences of plain text. No markdown, no lists, no greetings.
 - Mention 2-3 habits BY NAME with their actual numbers — celebrate the strongest, gently nudge the weakest.
 - If a habit's goal.direction is "at_most" it is a REDUCTION habit: LOWER values are success. Never praise an increase for these.
-- Quote successRatePercent and daysTracked exactly as given — they match the numbers on the user's dashboard. Never recompute a rate from other fields.
+- The input is JSON. NEVER write a field name in your reply — no "successRatePercent", no "daysTracked", no "currentStreak". Use the VALUES in ordinary English: say "a 73% success rate over 37 days" or "a 5-day streak", never "73 successRatePercent over 37 daysTracked".
+- The successRatePercent and daysTracked values match the numbers on the user's dashboard — state them as a percentage and a day count, never recompute them from other fields.
 - Be warm and specific, never generic filler.`;
 
 function isAiConfigured() {
@@ -130,12 +132,45 @@ async function callGemini(systemPrompt, userText) {
   return text || null;
 }
 
-function generateCoachNote(summary) {
-  return callGemini(SYSTEM_PROMPT, `Habit stats:\n${JSON.stringify(summary)}`);
+// Bumped whenever a prompt changes, so cached notes written by an older prompt
+// are regenerated instead of sitting on screen until the next IST midnight.
+const PROMPT_VERSION = 2;
+
+// The model sometimes echoes the JSON key names back at the user
+// ("73 successRatePercent over 37 daysTracked"). That reads as a broken app, so
+// discard the response — callers already treat null as "show the rule-based
+// insight instead".
+const FIELD_NAME_RE = /\b(successRatePercent|daysTracked|daysLogged|currentStreak|trackingType|recentEntries|loggedToday|todayValue|habitCount|doneTodayCount)\b/;
+
+// Also applied to cached rows on read, so text written before this guard existed
+// is never served.
+function isPresentable(text) {
+  return !!text && !FIELD_NAME_RE.test(text);
 }
 
-function generateDailyDigest(summary) {
-  return callGemini(DIGEST_PROMPT, `Dashboard stats:\n${JSON.stringify(summary)}`);
+function rejectRawFieldNames(text) {
+  if (!text) return null;
+  if (!isPresentable(text)) {
+    console.warn('AI response echoed raw field names — discarding');
+    return null;
+  }
+  return text;
 }
 
-module.exports = { isAiConfigured, buildHabitSummary, buildAccountSummary, generateCoachNote, generateDailyDigest };
+async function generateCoachNote(summary) {
+  return rejectRawFieldNames(await callGemini(SYSTEM_PROMPT, `Habit stats:\n${JSON.stringify(summary)}`));
+}
+
+async function generateDailyDigest(summary) {
+  return rejectRawFieldNames(await callGemini(DIGEST_PROMPT, `Dashboard stats:\n${JSON.stringify(summary)}`));
+}
+
+module.exports = {
+  isAiConfigured,
+  PROMPT_VERSION,
+  isPresentable,
+  buildHabitSummary,
+  buildAccountSummary,
+  generateCoachNote,
+  generateDailyDigest,
+};

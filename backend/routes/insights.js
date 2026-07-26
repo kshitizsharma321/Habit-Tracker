@@ -7,7 +7,7 @@ const Habit = require('../models/Habit');
 const AiInsight = require('../models/AiInsight');
 const { requireAuth } = require('../middleware/auth');
 const { getISTDateKey } = require('../lib/dates');
-const { isAiConfigured, buildHabitSummary, buildAccountSummary, generateCoachNote, generateDailyDigest } = require('../lib/aiInsights');
+const { isAiConfigured, PROMPT_VERSION, isPresentable, buildHabitSummary, buildAccountSummary, generateCoachNote, generateDailyDigest } = require('../lib/aiInsights');
 
 const router = express.Router();
 
@@ -25,20 +25,31 @@ const aiLimiter = rateLimit({
 // case — someone editing the same entry over and over — so quota stays bounded.
 const MAX_DAILY_GENERATIONS = 6;
 
-// A stable fingerprint of the numbers the prompt was built from. Any change to
-// the stats the model was told about invalidates the cached text.
+// A stable fingerprint of the numbers the prompt was built from, plus the prompt
+// version itself. Any change to the stats the model was told about — or to how
+// we told it — invalidates the cached text.
 function fingerprint(summary) {
-  return crypto.createHash('sha256').update(JSON.stringify(summary)).digest('hex').slice(0, 32);
+  return crypto
+    .createHash('sha256')
+    .update(`v${PROMPT_VERSION}:${JSON.stringify(summary)}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 
 // Shared cache decision. Returns the text to serve, or null meaning "generate".
 // Serving a stale row past the cap is deliberate: slightly outdated text beats
 // an empty card or a surprise bill.
 function resolveCached(cached, signature) {
-  if (!cached) return null;
+  if (!cached || !isPresentable(cached.text)) return null;
   if (cached.signature === signature) return cached.text;
   if (cached.generations >= MAX_DAILY_GENERATIONS) return cached.text;
   return null;
+}
+
+// Stale-but-readable text beats an empty card when generation fails; text that
+// leaked field names does not.
+function staleFallback(cached) {
+  return isPresentable(cached?.text) ? cached.text : null;
 }
 
 // ── POST /ai — AI "Coach's note" for one habit ─────────────────────────
@@ -71,7 +82,7 @@ router.post('/ai', requireAuth, aiLimiter, async (req, res) => {
     const text = await generateCoachNote(summary).catch(() => null);
     if (!text) {
       // Generation failed — a stale note still beats an empty card.
-      return res.json({ text: cached?.text ?? null });
+      return res.json({ text: staleFallback(cached) });
     }
 
     await AiInsight.findOneAndUpdate(
@@ -122,7 +133,7 @@ router.post('/ai-digest', requireAuth, aiLimiter, async (req, res) => {
     if (hit) return res.json({ text: hit, cached: true });
 
     const text = await generateDailyDigest(summary).catch(() => null);
-    if (!text) return res.json({ text: cached?.text ?? null });
+    if (!text) return res.json({ text: staleFallback(cached) });
 
     await AiInsight.findOneAndUpdate(
       { userId: req.user._id, habitId: null, dateKey },
